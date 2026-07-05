@@ -32,6 +32,9 @@ jobs:
         run: |
           mkdir -p docs/game
           godot --headless --export-release "Web" docs/game/CHIZEL.html
+          test -f docs/game/CHIZEL.html
+          test -f docs/game/CHIZEL.wasm
+          test -f docs/game/CHIZEL.pck
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
