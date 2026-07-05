@@ -1,0 +1,6 @@
+.godot/
+.import/
+docs/game/*
+!docs/game/.gitkeep
+*.tmp
+*.log

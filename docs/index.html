@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101214">
+  <meta name="description" content="CHIZEL is a low-poly model creator for carving 3D forms from simple blueprint views.">
+  <title>CHIZEL | Low-Poly Model Creator</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero" aria-labelledby="page-title">
+      <div class="brand-panel">
+        <div class="brand-row">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">CHIZEL</span>
+        </div>
+        <h1 id="page-title">Carve low-poly 3D models from blueprint cuts.</h1>
+        <p class="lede">A focused Godot tool for shaping solid block forms with lasso cuts, mirror carving, reference tracing, and GLB export.</p>
+        <div class="actions">
+          <a class="primary-action" href="game/CHIZEL.html">Launch CHIZEL</a>
+          <a class="secondary-action" href="#deploy-notes">Deploy Notes</a>
+        </div>
+      </div>
+      <canvas id="hero-model" width="960" height="720" aria-label="Rotating low-poly CHIZEL preview"></canvas>
+    </section>
+
+    <section class="play-surface" aria-label="CHIZEL web build">
+      <div class="play-head">
+        <div>
+          <p class="eyebrow">Web Build</p>
+          <h2>CHIZEL Workspace</h2>
+        </div>
+        <a class="small-action" href="game/CHIZEL.html">Open Fullscreen</a>
+      </div>
+      <iframe class="game-frame" src="game/CHIZEL.html" title="CHIZEL Godot application"></iframe>
+      <p class="build-note">If the frame is blank, run the GitHub Pages workflow or export the Godot Web preset to <code>docs/game/CHIZEL.html</code>.</p>
+    </section>
+
+    <section class="deploy-notes" id="deploy-notes" aria-label="Deployment notes">
+      <p class="eyebrow">GitHub Pages</p>
+      <h2>Ready For A Web Export</h2>
+      <p>Push the repo to GitHub, enable Pages from GitHub Actions, then run the deploy workflow. The workflow exports the Godot Web preset and publishes this branded page with the CHIZEL build embedded.</p>
+    </section>
+  </main>
+  <script src="site.js"></script>
+</body>
+</html>
