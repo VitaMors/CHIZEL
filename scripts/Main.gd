@@ -536,7 +536,7 @@ func _reset_model() -> void:
 
 func _clean_solid_model() -> void:
 	_push_undo()
-	var removed := volume.clean_solid_body()
+	var removed := volume.clean_solid_body(false)
 	if removed == 0:
 		undo_stack.pop_back()
 		_set_status("Model is already one clean solid body.")

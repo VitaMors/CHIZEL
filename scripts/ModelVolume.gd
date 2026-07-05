@@ -297,11 +297,12 @@ func _neighbor_directions() -> Array[Vector3i]:
 
 func build_mesh() -> ArrayMesh:
 	if cut_surfaces.is_empty():
-		return build_grid_shell_mesh(true)
+		return build_base_poly_mesh()
 
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
+	var fallback_surfaces: Array = _latest_projection_surfaces()
 	if has_display_axes:
 		var visible_surfaces: Array = _visible_cut_surfaces()
 		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size():
@@ -318,7 +319,13 @@ func build_mesh() -> ArrayMesh:
 		if combined_mesh.get_surface_count() > 0:
 			return combined_mesh
 
-	return build_grid_shell_mesh(false)
+	if not fallback_surfaces.is_empty():
+		return build_exact_cut_mesh(fallback_surfaces)
+	return ArrayMesh.new()
+
+
+func build_base_poly_mesh() -> ArrayMesh:
+	return _mesh_from_polyhedron_faces(_cube_polyhedron_faces())
 
 
 func _cut_surfaces_share_projection() -> bool:
@@ -366,6 +373,30 @@ func _visible_cut_surfaces() -> Array:
 		if _surface_matches_axes(surface, reference_axis_x, reference_axis_y, reference_depth_axis):
 			visible_surfaces.append(surface)
 	return visible_surfaces
+
+
+func _latest_projection_surfaces() -> Array:
+	if cut_surfaces.is_empty():
+		return []
+
+	var reference_surface: Dictionary = cut_surfaces[cut_surfaces.size() - 1] as Dictionary
+	var reference_group: String = _surface_view_group(reference_surface)
+	var matching_surfaces: Array = []
+	if reference_group != "":
+		for surface_value in cut_surfaces:
+			var surface: Dictionary = surface_value as Dictionary
+			if _surface_view_group(surface) == reference_group:
+				matching_surfaces.append(surface)
+		return matching_surfaces
+
+	var reference_axis_x: Vector3 = reference_surface["axis_x"] as Vector3
+	var reference_axis_y: Vector3 = reference_surface["axis_y"] as Vector3
+	var reference_depth_axis: Vector3 = reference_surface["depth_axis"] as Vector3
+	for surface_value in cut_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if _surface_matches_axes(surface, reference_axis_x, reference_axis_y, reference_depth_axis):
+			matching_surfaces.append(surface)
+	return matching_surfaces
 
 
 func _surface_matches_axes(surface: Dictionary, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> bool:
