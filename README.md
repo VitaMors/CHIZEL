@@ -38,7 +38,7 @@ This build targets the first blueprint milestone:
 
 ## GitHub Pages Deployment
 
-This repo includes a branded GitHub Pages shell in `docs/`, a Godot Web export preset, and a deploy workflow.
+This repo includes a GitHub Pages app shell, a Godot Web export preset, and a deploy workflow. The public page is meant to open the CHIZEL Godot build directly, not show the README.
 
 1. Push the project to a GitHub repo.
 2. In GitHub, open Settings -> Pages.
@@ -46,6 +46,8 @@ This repo includes a branded GitHub Pages shell in `docs/`, a Godot Web export p
 4. Run the `Deploy CHIZEL to GitHub Pages` workflow, or push to `main`/`master`.
 
 The workflow exports the Godot Web preset to `docs/game/CHIZEL.html`, then publishes the full `docs/` folder as the Pages site.
+
+If GitHub Pages is set to deploy from the branch root instead of GitHub Actions, `index.html` will still load the same exported Godot build from `docs/game/CHIZEL.html`.
 
 For a manual local export, open Godot and export the `Web` preset. The target path is:
 
