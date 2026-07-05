@@ -1,5 +1,4 @@
 <meta http-equiv="refresh" content="0; url=./index.html">
-<script>location.replace("./index.html");</script>
 
 # CHIZEL
 
