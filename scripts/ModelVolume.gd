@@ -299,6 +299,9 @@ func build_mesh() -> ArrayMesh:
 	if cut_surfaces.is_empty():
 		return build_grid_shell_mesh(true)
 
+	if _cut_surfaces_share_projection():
+		return build_exact_cut_mesh(cut_surfaces)
+
 	if has_display_axes:
 		var visible_surfaces: Array = _visible_cut_surfaces()
 		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size():
@@ -316,6 +319,29 @@ func build_mesh() -> ArrayMesh:
 			return combined_mesh
 
 	return build_grid_shell_mesh(false)
+
+
+func _cut_surfaces_share_projection() -> bool:
+	if cut_surfaces.is_empty():
+		return false
+
+	var first_surface: Dictionary = cut_surfaces[0] as Dictionary
+	var first_group: String = _surface_view_group(first_surface)
+	if first_group != "":
+		for surface_value in cut_surfaces:
+			var surface: Dictionary = surface_value as Dictionary
+			if _surface_view_group(surface) != first_group:
+				return false
+		return true
+
+	var first_axis_x: Vector3 = first_surface["axis_x"] as Vector3
+	var first_axis_y: Vector3 = first_surface["axis_y"] as Vector3
+	var first_depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
+	for surface_value in cut_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if not _surface_matches_axes(surface, first_axis_x, first_axis_y, first_depth_axis):
+			return false
+	return true
 
 
 func _visible_cut_surfaces() -> Array:
