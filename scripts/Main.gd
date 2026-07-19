@@ -627,26 +627,26 @@ func _nudge_face_view(delta: Vector2) -> void:
 	var next_up := up
 
 	if delta.x > 0.0:
-		next_direction = axis_x
-		next_up = axis_y
+		next_direction = (direction + axis_x).normalized()
+		next_up = up
 	elif delta.x < 0.0:
-		next_direction = -axis_x
-		next_up = axis_y
+		next_direction = (direction - axis_x).normalized()
+		next_up = up
 	elif delta.y > 0.0:
-		next_direction = axis_y
-		next_up = -direction
+		next_direction = (direction + axis_y).normalized()
+		next_up = (axis_y - direction).normalized()
 	elif delta.y < 0.0:
-		next_direction = -axis_y
-		next_up = direction
+		next_direction = (direction - axis_y).normalized()
+		next_up = (axis_y + direction).normalized()
 
 	_set_cube_face_view(next_direction, next_up)
 
 
 func _set_cube_face_view(view_direction: Vector3, up_hint: Vector3) -> void:
-	var direction: Vector3 = _snap_cardinal_direction(view_direction)
-	var up: Vector3 = _orthogonalized_up(direction, _snap_cardinal_direction(up_hint))
+	var direction: Vector3 = _normalized_view_direction(view_direction)
+	var up: Vector3 = _orthogonalized_up(direction, up_hint)
 	_set_orthographic_direction(_face_name_for_direction(direction), direction, up)
-	_set_status("%s selected for lasso cuts." % current_view)
+	_set_status("%s angle selected for lasso cuts." % current_view)
 
 
 func _set_orthographic_view(view_name: String) -> void:
@@ -680,7 +680,7 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 	grid_mesh.visible = true
 	_clear_lasso()
 
-	face_view_direction = _snap_cardinal_direction(view_direction)
+	face_view_direction = _normalized_view_direction(view_direction)
 	face_view_up = _orthogonalized_up(face_view_direction, up_hint)
 	ortho_camera.position = face_view_direction * FACE_CAMERA_DISTANCE
 	ortho_camera.look_at(Vector3.ZERO, face_view_up)
@@ -694,38 +694,31 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 
 
 func _face_name_for_direction(direction: Vector3) -> String:
-	var snapped: Vector3 = _snap_cardinal_direction(direction)
-	if snapped.x > 0.0:
-		return "Right"
-	if snapped.x < 0.0:
-		return "Left"
-	if snapped.y > 0.0:
-		return "Top"
-	if snapped.y < 0.0:
-		return "Bottom"
-	if snapped.z < 0.0:
-		return "Back"
-	return "Front"
+	var normalized_direction := _normalized_view_direction(direction)
+	var names: Array[String] = []
+	if absf(normalized_direction.z) > 0.32:
+		names.append("Front" if normalized_direction.z > 0.0 else "Back")
+	if absf(normalized_direction.x) > 0.32:
+		names.append("Right" if normalized_direction.x > 0.0 else "Left")
+	if absf(normalized_direction.y) > 0.32:
+		names.append("Top" if normalized_direction.y > 0.0 else "Bottom")
+	if names.is_empty():
+		return "Front"
+	return " ".join(names)
 
 
-func _snap_cardinal_direction(direction: Vector3) -> Vector3:
-	var normalized_direction := direction.normalized()
-	var abs_x := absf(normalized_direction.x)
-	var abs_y := absf(normalized_direction.y)
-	var abs_z := absf(normalized_direction.z)
-	if abs_x >= abs_y and abs_x >= abs_z:
-		return Vector3(signf(normalized_direction.x), 0, 0)
-	if abs_y >= abs_x and abs_y >= abs_z:
-		return Vector3(0, signf(normalized_direction.y), 0)
-	return Vector3(0, 0, signf(normalized_direction.z))
+func _normalized_view_direction(direction: Vector3) -> Vector3:
+	if direction.length_squared() < 0.0001:
+		return Vector3(0, 0, 1)
+	return direction.normalized()
 
 
 func _orthogonalized_up(direction: Vector3, up_hint: Vector3) -> Vector3:
-	var snapped_direction := _snap_cardinal_direction(direction)
-	var up := up_hint - snapped_direction * up_hint.dot(snapped_direction)
+	var normalized_direction := _normalized_view_direction(direction)
+	var up := up_hint - normalized_direction * up_hint.dot(normalized_direction)
 	if up.length_squared() < 0.0001:
-		up = Vector3.FORWARD if absf(snapped_direction.dot(Vector3.UP)) > 0.9 else Vector3.UP
-		up -= snapped_direction * up.dot(snapped_direction)
+		up = Vector3.FORWARD if absf(normalized_direction.dot(Vector3.UP)) > 0.9 else Vector3.UP
+		up -= normalized_direction * up.dot(normalized_direction)
 	return up.normalized()
 
 func _update_perspective_camera() -> void:

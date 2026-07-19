@@ -61,9 +61,15 @@ func _draw() -> void:
 	_draw_polyline_closed(front, edge_color, 2.4)
 
 	var font := get_theme_default_font()
-	var font_size := 14
-	var text_size := font.get_string_size(face_label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-	draw_string(font, center - text_size * 0.5 + Vector2(-radius * 0.36, radius * 0.34), face_label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
+	var font_size := 12
+	var words := face_label.split(" ")
+	var line_height := float(font_size) * 0.92
+	var block_height := line_height * float(words.size() - 1)
+	for index in range(words.size()):
+		var word := String(words[index])
+		var text_size := font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		var text_position := center - text_size * 0.5 + Vector2(-radius * 0.36, radius * 0.21 - block_height * 0.5 + line_height * float(index))
+		draw_string(font, text_position, word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
 
 
 func _draw_polyline_closed(points: PackedVector2Array, color: Color, width: float) -> void:

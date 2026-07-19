@@ -882,24 +882,57 @@ func build_exact_surface_mesh(active_cuts: Array, active_extrusions: Array) -> A
 
 func _projected_cube_rect(axis_x: Vector3, axis_y: Vector3) -> PackedVector2Array:
 	var half := Vector3(grid_size.x, grid_size.y, grid_size.z) * voxel_size * 0.5
-	var min_point := Vector2(INF, INF)
-	var max_point := Vector2(-INF, -INF)
+	var projected_points: Array[Vector2] = []
 	for x in [-half.x, half.x]:
 		for y in [-half.y, half.y]:
 			for z in [-half.z, half.z]:
 				var point_3d := Vector3(x, y, z)
-				var point_2d := Vector2(point_3d.dot(axis_x), point_3d.dot(axis_y))
-				min_point.x = minf(min_point.x, point_2d.x)
-				min_point.y = minf(min_point.y, point_2d.y)
-				max_point.x = maxf(max_point.x, point_2d.x)
-				max_point.y = maxf(max_point.y, point_2d.y)
+				_add_unique_projected_point(projected_points, Vector2(point_3d.dot(axis_x), point_3d.dot(axis_y)))
+	return _convex_hull_2d(projected_points)
 
-	return PackedVector2Array([
-		Vector2(min_point.x, min_point.y),
-		Vector2(max_point.x, min_point.y),
-		Vector2(max_point.x, max_point.y),
-		Vector2(min_point.x, max_point.y),
-	])
+
+func _add_unique_projected_point(points: Array[Vector2], point: Vector2) -> void:
+	for existing in points:
+		if existing.distance_squared_to(point) < 0.000001:
+			return
+	points.append(point)
+
+
+func _convex_hull_2d(points: Array[Vector2]) -> PackedVector2Array:
+	if points.size() <= 3:
+		return PackedVector2Array(points)
+
+	points.sort_custom(func(a: Vector2, b: Vector2) -> bool:
+		if not is_equal_approx(a.x, b.x):
+			return a.x < b.x
+		return a.y < b.y
+	)
+
+	var lower: Array[Vector2] = []
+	for point in points:
+		while lower.size() >= 2 and _cross_2d(lower[lower.size() - 1] - lower[lower.size() - 2], point - lower[lower.size() - 1]) <= 0.000001:
+			lower.pop_back()
+		lower.append(point)
+
+	var upper: Array[Vector2] = []
+	for index in range(points.size() - 1, -1, -1):
+		var point: Vector2 = points[index]
+		while upper.size() >= 2 and _cross_2d(upper[upper.size() - 1] - upper[upper.size() - 2], point - upper[upper.size() - 1]) <= 0.000001:
+			upper.pop_back()
+		upper.append(point)
+
+	lower.pop_back()
+	upper.pop_back()
+	var hull: PackedVector2Array = PackedVector2Array()
+	for point in lower:
+		hull.append(point)
+	for point in upper:
+		hull.append(point)
+	return hull
+
+
+func _cross_2d(a: Vector2, b: Vector2) -> float:
+	return a.x * b.y - a.y * b.x
 
 
 func _extrusion_shapes_for_polygons(polygons: Array, active_extrusions: Array) -> Array:
