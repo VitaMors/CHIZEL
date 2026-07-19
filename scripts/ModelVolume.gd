@@ -7,6 +7,7 @@ var grid_size: Vector3i = Vector3i(32, 32, 32)
 var voxel_size: float = 0.125
 var voxels: PackedInt32Array = PackedInt32Array()
 var cut_surfaces: Array = []
+var extrude_surfaces: Array = []
 var has_display_axes: bool = false
 var display_axis_x: Vector3 = Vector3.RIGHT
 var display_axis_y: Vector3 = Vector3.UP
@@ -37,6 +38,7 @@ func reset_cube() -> void:
 	voxels.resize(grid_size.x * grid_size.y * grid_size.z)
 	voxels.fill(0)
 	cut_surfaces.clear()
+	extrude_surfaces.clear()
 
 
 func clone_voxels() -> PackedInt32Array:
@@ -46,18 +48,21 @@ func clone_voxels() -> PackedInt32Array:
 func restore_voxels(snapshot: PackedInt32Array) -> void:
 	voxels = snapshot.duplicate()
 	cut_surfaces.clear()
+	extrude_surfaces.clear()
 
 
 func clone_state() -> Dictionary:
 	return {
 		"voxels": voxels.duplicate(),
 		"cut_surfaces": cut_surfaces.duplicate(true),
+		"extrude_surfaces": extrude_surfaces.duplicate(true),
 	}
 
 
 func restore_state(snapshot: Dictionary) -> void:
 	voxels = snapshot.get("voxels", PackedInt32Array()).duplicate()
 	cut_surfaces = snapshot.get("cut_surfaces", []).duplicate(true)
+	extrude_surfaces = snapshot.get("extrude_surfaces", []).duplicate(true)
 
 
 func index(x: int, y: int, z: int) -> int:
@@ -83,6 +88,24 @@ func carve_through(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: 
 
 func add_through(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, mirror_x: bool = false, view_name: String = "") -> int:
 	return apply_lasso_operation(polygon_points, axis_x, axis_y, true, false, mirror_x, view_name)
+
+
+func extrude_surface(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, amount: float, mirror_x: bool = false, view_name: String = "") -> int:
+	if polygon_points.size() < 3 or absf(amount) <= 0.0001:
+		return 0
+
+	var depth_axis := axis_x.cross(axis_y).normalized()
+	var operation_view_name: String = view_name if view_name != "" else display_view_name
+	_store_extrude_surface(polygon_points, axis_x, axis_y, depth_axis, amount, operation_view_name)
+	if mirror_x:
+		var mirrored_polygon := PackedVector2Array()
+		for point in polygon_points:
+			mirrored_polygon.append(Vector2(-point.x, point.y))
+		_store_extrude_surface(mirrored_polygon, axis_x, axis_y, depth_axis, amount, operation_view_name)
+
+	var area_steps: int = maxi(1, ceili(absf(_polygon_area(polygon_points)) / (voxel_size * voxel_size)))
+	var depth_steps: int = maxi(1, ceili(absf(amount) / voxel_size))
+	return area_steps * depth_steps
 
 
 func cut_count() -> int:
@@ -296,6 +319,20 @@ func _neighbor_directions() -> Array[Vector3i]:
 
 
 func build_mesh() -> ArrayMesh:
+	if extrude_surfaces.is_empty():
+		return _build_cut_mesh()
+
+	if _surface_operations_share_projection():
+		var exact_surface_mesh: ArrayMesh = build_exact_surface_mesh(cut_surfaces, extrude_surfaces)
+		if exact_surface_mesh.get_surface_count() > 0:
+			return exact_surface_mesh
+
+	var base_mesh: ArrayMesh = _build_cut_mesh()
+	var overlay_mesh: ArrayMesh = build_extrusion_overlay_mesh(extrude_surfaces)
+	return _combine_meshes([base_mesh, overlay_mesh])
+
+
+func _build_cut_mesh() -> ArrayMesh:
 	if cut_surfaces.is_empty():
 		return build_base_poly_mesh()
 
@@ -305,21 +342,21 @@ func build_mesh() -> ArrayMesh:
 	var fallback_surfaces: Array = _latest_projection_surfaces()
 	if has_display_axes:
 		var visible_surfaces: Array = _visible_cut_surfaces()
-		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size():
+		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size() and _surfaces_can_use_exact_projection(visible_surfaces):
 			return build_exact_cut_mesh(visible_surfaces)
 
 		var display_combined_mesh: ArrayMesh = build_combined_cut_mesh()
 		if display_combined_mesh.get_surface_count() > 0:
 			return display_combined_mesh
 
-		if not visible_surfaces.is_empty():
+		if not visible_surfaces.is_empty() and _surfaces_can_use_exact_projection(visible_surfaces):
 			return build_exact_cut_mesh(visible_surfaces)
 	else:
 		var combined_mesh: ArrayMesh = build_combined_cut_mesh()
 		if combined_mesh.get_surface_count() > 0:
 			return combined_mesh
 
-	if not fallback_surfaces.is_empty():
+	if not fallback_surfaces.is_empty() and _surfaces_can_use_exact_projection(fallback_surfaces):
 		return build_exact_cut_mesh(fallback_surfaces)
 	return ArrayMesh.new()
 
@@ -328,11 +365,44 @@ func build_base_poly_mesh() -> ArrayMesh:
 	return _mesh_from_polyhedron_faces(_cube_polyhedron_faces())
 
 
+func _surfaces_can_use_exact_projection(active_surfaces: Array) -> bool:
+	if active_surfaces.is_empty():
+		return false
+	var first_surface: Dictionary = active_surfaces[0] as Dictionary
+	return _surface_projection_is_axis_aligned(first_surface)
+
+
+func _surface_projection_is_axis_aligned(surface: Dictionary) -> bool:
+	var depth_axis: Vector3 = surface["depth_axis"] as Vector3
+	return absf(depth_axis.x) > 0.999 or absf(depth_axis.y) > 0.999 or absf(depth_axis.z) > 0.999
+
+func _surface_operations_share_projection() -> bool:
+	var operations: Array = []
+	operations.append_array(cut_surfaces)
+	operations.append_array(extrude_surfaces)
+	if operations.is_empty():
+		return false
+
+	var first_surface: Dictionary = operations[0] as Dictionary
+	var first_axis_x: Vector3 = first_surface["axis_x"] as Vector3
+	var first_axis_y: Vector3 = first_surface["axis_y"] as Vector3
+	var first_depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
+	if not _surface_projection_is_axis_aligned(first_surface):
+		return false
+	for operation_value in operations:
+		var operation: Dictionary = operation_value as Dictionary
+		if not _surface_matches_axes(operation, first_axis_x, first_axis_y, first_depth_axis):
+			return false
+	return true
+
+
 func _cut_surfaces_share_projection() -> bool:
 	if cut_surfaces.is_empty():
 		return false
 
 	var first_surface: Dictionary = cut_surfaces[0] as Dictionary
+	if not _surface_projection_is_axis_aligned(first_surface):
+		return false
 	var first_group: String = _surface_view_group(first_surface)
 	if first_group != "":
 		for surface_value in cut_surfaces:
@@ -642,8 +712,92 @@ func _mesh_from_polyhedron_faces(faces: Array) -> ArrayMesh:
 	return mesh
 
 
+func build_extrusion_overlay_mesh(active_extrusions: Array) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	for surface_value in active_extrusions:
+		var surface: Dictionary = surface_value as Dictionary
+		var polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
+		var amount: float = float(surface.get("amount", 0.0))
+		if polygon.size() < 3 or absf(amount) <= 0.0001:
+			continue
+
+		var axis_x: Vector3 = surface["axis_x"] as Vector3
+		var axis_y: Vector3 = surface["axis_y"] as Vector3
+		var depth_axis: Vector3 = surface["depth_axis"] as Vector3
+		var surface_depth: float = float(surface["depth_max"])
+		var extruded_depth: float = surface_depth + amount
+		_add_extruded_cap(vertices, normals, colors, indices, polygon, axis_x, axis_y, depth_axis, extruded_depth, depth_axis)
+		_add_surface_extrusion_sides(vertices, normals, colors, indices, polygon, axis_x, axis_y, depth_axis, surface_depth, extruded_depth, amount > 0.0)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	if vertices.size() > 0:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _combine_meshes(meshes: Array) -> ArrayMesh:
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	for mesh_value in meshes:
+		var source_mesh: ArrayMesh = mesh_value as ArrayMesh
+		if source_mesh == null or source_mesh.get_surface_count() == 0:
+			continue
+
+		for surface_index in range(source_mesh.get_surface_count()):
+			var arrays: Array = source_mesh.surface_get_arrays(surface_index)
+			var source_vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var source_normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var source_colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+			var source_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var vertex_offset := vertices.size()
+
+			vertices.append_array(source_vertices)
+			normals.append_array(source_normals)
+			colors.append_array(source_colors)
+			for source_index in source_indices:
+				indices.append(source_index + vertex_offset)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	if vertices.size() > 0:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
 func build_exact_cut_mesh(active_surfaces: Array) -> ArrayMesh:
-	var first_surface: Dictionary = active_surfaces[0] as Dictionary
+	return build_exact_surface_mesh(active_surfaces, [])
+
+
+func build_exact_surface_mesh(active_cuts: Array, active_extrusions: Array) -> ArrayMesh:
+	if active_cuts.is_empty() and active_extrusions.is_empty():
+		return build_base_poly_mesh()
+
+	var first_surface: Dictionary = {}
+	if not active_cuts.is_empty():
+		first_surface = active_cuts[0] as Dictionary
+	else:
+		first_surface = active_extrusions[0] as Dictionary
+
 	var axis_x: Vector3 = first_surface["axis_x"] as Vector3
 	var axis_y: Vector3 = first_surface["axis_y"] as Vector3
 	var depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
@@ -651,7 +805,7 @@ func build_exact_cut_mesh(active_surfaces: Array) -> ArrayMesh:
 	var depth_max: float = float(first_surface["depth_max"])
 	var polygons: Array = [_projected_cube_rect(axis_x, axis_y)]
 
-	for surface in active_surfaces:
+	for surface in active_cuts:
 		var surface_data: Dictionary = surface as Dictionary
 		var cutter: PackedVector2Array = surface_data["polygon"] as PackedVector2Array
 		var next_polygons: Array = []
@@ -664,7 +818,8 @@ func build_exact_cut_mesh(active_surfaces: Array) -> ArrayMesh:
 					next_polygons.append(clipped_points)
 		polygons = next_polygons
 
-	return _build_extruded_polygons_mesh(polygons, axis_x, axis_y, depth_axis, depth_min, depth_max)
+	var extrusion_shapes: Array = _extrusion_shapes_for_polygons(polygons, active_extrusions)
+	return _build_extruded_polygons_mesh(polygons, axis_x, axis_y, depth_axis, depth_min, depth_max, extrusion_shapes)
 
 
 func _projected_cube_rect(axis_x: Vector3, axis_y: Vector3) -> PackedVector2Array:
@@ -689,19 +844,74 @@ func _projected_cube_rect(axis_x: Vector3, axis_y: Vector3) -> PackedVector2Arra
 	])
 
 
-func _build_extruded_polygons_mesh(polygons: Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3, depth_min: float, depth_max: float) -> ArrayMesh:
+func _extrusion_shapes_for_polygons(polygons: Array, active_extrusions: Array) -> Array:
+	var extrusion_shapes: Array = []
+	for surface_value in active_extrusions:
+		var surface: Dictionary = surface_value as Dictionary
+		var cutter: PackedVector2Array = surface["polygon"] as PackedVector2Array
+		var amount: float = float(surface.get("amount", 0.0))
+		if cutter.size() < 3 or absf(amount) <= 0.0001:
+			continue
+
+		for polygon_value in polygons:
+			var source_polygon: PackedVector2Array = polygon_value as PackedVector2Array
+			var intersections: Array = Geometry2D.intersect_polygons(source_polygon, cutter)
+			for intersection in intersections:
+				var points: PackedVector2Array = intersection as PackedVector2Array
+				if points.size() >= 3 and absf(_polygon_area(points)) > 0.0001:
+					extrusion_shapes.append({
+						"polygon": points,
+						"amount": amount,
+					})
+	return extrusion_shapes
+
+
+func _surface_polygons_without_extrusion_openings(polygons: Array, extrusion_shapes: Array) -> Array:
+	var top_polygons: Array = polygons.duplicate()
+	for shape_value in extrusion_shapes:
+		var shape: Dictionary = shape_value as Dictionary
+		var cutter: PackedVector2Array = shape["polygon"] as PackedVector2Array
+		var next_polygons: Array = []
+		for polygon_value in top_polygons:
+			var source_polygon: PackedVector2Array = polygon_value as PackedVector2Array
+			var clipped: Array = Geometry2D.clip_polygons(source_polygon, cutter)
+			for clipped_polygon in clipped:
+				var points: PackedVector2Array = clipped_polygon as PackedVector2Array
+				if points.size() >= 3 and absf(_polygon_area(points)) > 0.0001:
+					next_polygons.append(points)
+		top_polygons = next_polygons
+	return top_polygons
+
+
+func _build_extruded_polygons_mesh(polygons: Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3, depth_min: float, depth_max: float, extrusion_shapes: Array = []) -> ArrayMesh:
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
+	var top_polygons: Array = _surface_polygons_without_extrusion_openings(polygons, extrusion_shapes)
 
 	for polygon in polygons:
 		var points: PackedVector2Array = polygon as PackedVector2Array
 		if points.size() < 3:
 			continue
 		_add_extruded_cap(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, depth_min, -depth_axis)
-		_add_extruded_cap(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, depth_max, depth_axis)
 		_add_extruded_sides(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, depth_min, depth_max)
+
+	for polygon in top_polygons:
+		var points: PackedVector2Array = polygon as PackedVector2Array
+		if points.size() < 3:
+			continue
+		_add_extruded_cap(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, depth_max, depth_axis)
+
+	for shape_value in extrusion_shapes:
+		var shape: Dictionary = shape_value as Dictionary
+		var points: PackedVector2Array = shape["polygon"] as PackedVector2Array
+		var amount: float = float(shape.get("amount", 0.0))
+		if points.size() < 3 or absf(amount) <= 0.0001:
+			continue
+		var extruded_depth: float = depth_max + amount
+		_add_extruded_cap(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, extruded_depth, depth_axis)
+		_add_surface_extrusion_sides(vertices, normals, colors, indices, points, axis_x, axis_y, depth_axis, depth_max, extruded_depth, amount > 0.0)
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -747,6 +957,24 @@ func _add_extruded_sides(vertices: PackedVector3Array, normals: PackedVector3Arr
 		var p2: Vector3 = axis_x * b.x + axis_y * b.y + depth_axis * depth_max
 		var p3: Vector3 = axis_x * a.x + axis_y * a.y + depth_axis * depth_max
 		_append_quad(vertices, normals, colors, indices, [p0, p1, p2, p3], side_normal, materials[0])
+
+
+func _add_surface_extrusion_sides(vertices: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, polygon: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3, surface_depth: float, extruded_depth: float, is_outward: bool) -> void:
+	for edge_index in range(polygon.size()):
+		var a: Vector2 = polygon[edge_index]
+		var b: Vector2 = polygon[(edge_index + 1) % polygon.size()]
+		if a.distance_squared_to(b) <= 0.000001:
+			continue
+		var normal_2d: Vector2 = _outward_edge_normal_2d(polygon, edge_index)
+		var side_normal: Vector3 = (axis_x * normal_2d.x + axis_y * normal_2d.y).normalized()
+		if not is_outward:
+			side_normal = -side_normal
+		var p0: Vector3 = axis_x * a.x + axis_y * a.y + depth_axis * surface_depth
+		var p1: Vector3 = axis_x * b.x + axis_y * b.y + depth_axis * surface_depth
+		var p2: Vector3 = axis_x * b.x + axis_y * b.y + depth_axis * extruded_depth
+		var p3: Vector3 = axis_x * a.x + axis_y * a.y + depth_axis * extruded_depth
+		var quad: Array = [p0, p1, p2, p3] if is_outward else [p0, p3, p2, p1]
+		_append_quad(vertices, normals, colors, indices, quad, side_normal, materials[0])
 
 
 func _polygon_area(polygon: PackedVector2Array) -> float:
@@ -1076,6 +1304,20 @@ func _store_cut_surface(polygon_points: PackedVector2Array, axis_x: Vector3, axi
 		"depth_axis": depth_axis,
 		"depth_min": _projected_bound(depth_axis, true),
 		"depth_max": _projected_bound(depth_axis, false),
+		"view_name": view_name,
+		"view_group": _canonical_view_group(view_name),
+	})
+
+
+func _store_extrude_surface(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3, amount: float, view_name: String = "") -> void:
+	extrude_surfaces.append({
+		"polygon": polygon_points.duplicate(),
+		"axis_x": axis_x,
+		"axis_y": axis_y,
+		"depth_axis": depth_axis,
+		"depth_min": _projected_bound(depth_axis, true),
+		"depth_max": _projected_bound(depth_axis, false),
+		"amount": amount,
 		"view_name": view_name,
 		"view_group": _canonical_view_group(view_name),
 	})
