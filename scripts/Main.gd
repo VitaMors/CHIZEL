@@ -3,15 +3,15 @@ extends Node3D
 const ModelVolumeScript := preload("res://scripts/ModelVolume.gd")
 const LassoOverlayScript := preload("res://scripts/LassoOverlay.gd")
 const ReferenceOverlayScript := preload("res://scripts/ReferenceOverlay.gd")
-const DieFaceSelectorScript := preload("res://scripts/DieFaceSelector.gd")
+const CubeFaceSelectorScript := preload("res://scripts/CubeFaceSelector.gd")
 
 enum ToolMode { SELECT, CHISEL }
 enum CameraMode { PERSPECTIVE, ORTHOGRAPHIC }
 enum LassoMode { SUBTRACT, ADD, EXTRUDE }
 
-const MAX_EXTRUDE_DISTANCE := 1.5
-const EXTRUDE_VALUE_STEP := 0.025
-const DIE_FACE_CAMERA_DISTANCE := 6.0
+const MAX_EXTRUDE_DISTANCE := 8.0
+const EXTRUDE_VALUE_STEP := 0.05
+const FACE_CAMERA_DISTANCE := 6.0
 
 var volume
 var model_mesh: MeshInstance3D
@@ -24,12 +24,13 @@ var lasso_overlay
 var reference_overlay
 var status_label: Label
 var view_label: Label
-var die_face_selector
+var face_selector
 
 var tool_mode: ToolMode = ToolMode.SELECT
 var camera_mode: CameraMode = CameraMode.PERSPECTIVE
 var current_view: String = "Perspective"
-var die_face_index := 11
+var face_view_direction: Vector3 = Vector3(0, 0, 1)
+var face_view_up: Vector3 = Vector3.UP
 var lasso_points_screen: PackedVector2Array = PackedVector2Array()
 var undo_stack: Array[Dictionary] = []
 var redo_stack: Array[Dictionary] = []
@@ -175,7 +176,7 @@ func _setup_ui() -> void:
 
 	_add_section_label(left_box, "Cut Face")
 	_add_button(left_box, "Perspective", Callable(self, "_set_perspective_view"))
-	_setup_die_face_picker(left_box)
+	_setup_face_picker(left_box)
 	_add_section_label(left_box, "Reference")
 	_add_button(left_box, "Import Ref", Callable(self, "_show_reference_dialog"))
 	reference_toggle = CheckButton.new()
@@ -268,7 +269,7 @@ func _setup_ui() -> void:
 	canvas.add_child(reference_dialog)
 
 
-func _setup_die_face_picker(parent: Control) -> void:
+func _setup_face_picker(parent: Control) -> void:
 	var picker_box := VBoxContainer.new()
 	picker_box.custom_minimum_size = Vector2(150, 154)
 	picker_box.add_theme_constant_override("separation", 4)
@@ -276,33 +277,33 @@ func _setup_die_face_picker(parent: Control) -> void:
 
 	var up_row := HBoxContainer.new()
 	picker_box.add_child(up_row)
-	_add_face_arrow_button(up_row, "^", Callable(self, "_nudge_die_face").bind(Vector2(0, 1)))
+	_add_face_arrow_button(up_row, "^", Callable(self, "_nudge_face_view").bind(Vector2(0, 1)))
 
 	var middle_row := HBoxContainer.new()
 	middle_row.add_theme_constant_override("separation", 4)
 	picker_box.add_child(middle_row)
-	_add_face_arrow_button(middle_row, "<", Callable(self, "_nudge_die_face").bind(Vector2(-1, 0)))
-	die_face_selector = DieFaceSelectorScript.new()
-	die_face_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	die_face_selector.custom_minimum_size = Vector2(78, 92)
-	die_face_selector.die_pressed.connect(Callable(self, "_set_current_die_face"))
-	middle_row.add_child(die_face_selector)
-	_add_face_arrow_button(middle_row, ">", Callable(self, "_nudge_die_face").bind(Vector2(1, 0)))
+	_add_face_arrow_button(middle_row, "<", Callable(self, "_nudge_face_view").bind(Vector2(-1, 0)))
+	face_selector = CubeFaceSelectorScript.new()
+	face_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	face_selector.custom_minimum_size = Vector2(78, 92)
+	face_selector.face_pressed.connect(Callable(self, "_set_current_face_view"))
+	middle_row.add_child(face_selector)
+	_add_face_arrow_button(middle_row, ">", Callable(self, "_nudge_face_view").bind(Vector2(1, 0)))
 
 	var down_row := HBoxContainer.new()
 	picker_box.add_child(down_row)
-	_add_face_arrow_button(down_row, "v", Callable(self, "_nudge_die_face").bind(Vector2(0, -1)))
-	_update_die_face_selector()
+	_add_face_arrow_button(down_row, "v", Callable(self, "_nudge_face_view").bind(Vector2(0, -1)))
+	_update_face_selector()
 
 
 func _setup_extrude_panel(parent: Control) -> void:
 	extrude_panel = PanelContainer.new()
 	extrude_panel.name = "Extrude Panel"
 	extrude_panel.visible = false
-	extrude_panel.custom_minimum_size = Vector2(280, 128)
+	extrude_panel.custom_minimum_size = Vector2(320, 128)
 	extrude_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	extrude_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	extrude_panel.offset_left = -310
+	extrude_panel.offset_left = -350
 	extrude_panel.offset_top = 18
 	extrude_panel.offset_right = -24
 	extrude_panel.offset_bottom = 150
@@ -329,7 +330,7 @@ func _setup_extrude_panel(parent: Control) -> void:
 	extrude_slider.max_value = MAX_EXTRUDE_DISTANCE
 	extrude_slider.step = EXTRUDE_VALUE_STEP
 	extrude_slider.value = 0.0
-	extrude_slider.custom_minimum_size = Vector2(240, 28)
+	extrude_slider.custom_minimum_size = Vector2(280, 28)
 	extrude_slider.value_changed.connect(Callable(self, "_preview_pending_extrude"))
 	box.add_child(extrude_slider)
 
@@ -498,7 +499,7 @@ func _set_tool_chisel() -> void:
 	tool_mode = ToolMode.CHISEL
 	_clear_lasso()
 	if camera_mode != CameraMode.ORTHOGRAPHIC:
-		_set_die_face(die_face_index)
+		_set_cube_face_view(face_view_direction, face_view_up)
 	lasso_overlay.set_active(true)
 	_set_status("Chisel %s mode. Click polygon points on the selected die face." % _lasso_mode_name())
 
@@ -613,43 +614,39 @@ func _set_perspective_view() -> void:
 	_update_reference_visibility()
 
 
-func _set_current_die_face() -> void:
-	_set_die_face(die_face_index)
+func _set_current_face_view() -> void:
+	_set_cube_face_view(face_view_direction, face_view_up)
 
 
-func _nudge_die_face(delta: Vector2) -> void:
-	var directions: Array[Vector3] = _die_face_directions()
-	var current_direction: Vector3 = directions[die_face_index].normalized()
-	var axis_x := Vector3.RIGHT
-	var axis_y := Vector3.UP
-	if camera_mode == CameraMode.ORTHOGRAPHIC:
-		axis_x = ortho_camera.global_transform.basis.x.normalized()
-		axis_y = ortho_camera.global_transform.basis.y.normalized()
-	else:
-		var basis: Dictionary = _view_basis_for_direction(current_direction)
-		axis_x = basis["axis_x"] as Vector3
-		axis_y = basis["axis_y"] as Vector3
+func _nudge_face_view(delta: Vector2) -> void:
+	var direction: Vector3 = face_view_direction.normalized()
+	var up: Vector3 = _orthogonalized_up(direction, face_view_up)
+	var axis_x: Vector3 = up.cross(direction).normalized()
+	var axis_y: Vector3 = direction.cross(axis_x).normalized()
+	var next_direction := direction
+	var next_up := up
 
-	var desired_direction: Vector3 = (current_direction + axis_x * delta.x + axis_y * delta.y).normalized()
-	var best_index := die_face_index
-	var best_score := -INF
-	for index in range(directions.size()):
-		if index == die_face_index:
-			continue
-		var score: float = directions[index].normalized().dot(desired_direction)
-		if score > best_score:
-			best_score = score
-			best_index = index
-	_set_die_face(best_index)
+	if delta.x > 0.0:
+		next_direction = axis_x
+		next_up = axis_y
+	elif delta.x < 0.0:
+		next_direction = -axis_x
+		next_up = axis_y
+	elif delta.y > 0.0:
+		next_direction = axis_y
+		next_up = -direction
+	elif delta.y < 0.0:
+		next_direction = -axis_y
+		next_up = direction
+
+	_set_cube_face_view(next_direction, next_up)
 
 
-func _set_die_face(next_index: int) -> void:
-	var directions: Array[Vector3] = _die_face_directions()
-	var face_count: int = directions.size()
-	die_face_index = ((next_index % face_count) + face_count) % face_count
-	var direction: Vector3 = directions[die_face_index].normalized()
-	_set_orthographic_direction(_die_face_name(die_face_index), direction, _up_hint_for_direction(direction))
-	_set_status("%s selected for lasso cuts." % _die_face_name(die_face_index))
+func _set_cube_face_view(view_direction: Vector3, up_hint: Vector3) -> void:
+	var direction: Vector3 = _snap_cardinal_direction(view_direction)
+	var up: Vector3 = _orthogonalized_up(direction, _snap_cardinal_direction(up_hint))
+	_set_orthographic_direction(_face_name_for_direction(direction), direction, up)
+	_set_status("%s selected for lasso cuts." % current_view)
 
 
 func _set_orthographic_view(view_name: String) -> void:
@@ -670,7 +667,7 @@ func _set_orthographic_view(view_name: String) -> void:
 		"Bottom":
 			camera_position = Vector3(0, -6, 0)
 			up = Vector3.BACK
-	_set_orthographic_direction(view_name, camera_position.normalized(), up)
+	_set_cube_face_view(camera_position.normalized(), up)
 
 
 func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_hint: Vector3) -> void:
@@ -683,9 +680,10 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 	grid_mesh.visible = true
 	_clear_lasso()
 
-	var direction: Vector3 = view_direction.normalized()
-	ortho_camera.position = direction * DIE_FACE_CAMERA_DISTANCE
-	ortho_camera.look_at(Vector3.ZERO, up_hint)
+	face_view_direction = _snap_cardinal_direction(view_direction)
+	face_view_up = _orthogonalized_up(face_view_direction, up_hint)
+	ortho_camera.position = face_view_direction * FACE_CAMERA_DISTANCE
+	ortho_camera.look_at(Vector3.ZERO, face_view_up)
 	volume.set_display_axes(ortho_camera.global_transform.basis.x.normalized(), ortho_camera.global_transform.basis.y.normalized(), current_view)
 	_rebuild_model_mesh()
 	_build_grid()
@@ -695,44 +693,40 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 	_update_reference_visibility()
 
 
-func _die_face_name(index: int) -> String:
-	return "Face %02d" % (index + 1)
+func _face_name_for_direction(direction: Vector3) -> String:
+	var snapped: Vector3 = _snap_cardinal_direction(direction)
+	if snapped.x > 0.0:
+		return "Right"
+	if snapped.x < 0.0:
+		return "Left"
+	if snapped.y > 0.0:
+		return "Top"
+	if snapped.y < 0.0:
+		return "Bottom"
+	if snapped.z < 0.0:
+		return "Back"
+	return "Front"
 
 
-func _die_face_directions() -> Array[Vector3]:
-	var phi := (1.0 + sqrt(5.0)) * 0.5
-	return [
-		Vector3(0, 1, phi).normalized(),
-		Vector3(phi, 0, 1).normalized(),
-		Vector3(1, phi, 0).normalized(),
-		Vector3(-1, phi, 0).normalized(),
-		Vector3(-phi, 0, 1).normalized(),
-		Vector3(-phi, 0, -1).normalized(),
-		Vector3(-1, -phi, 0).normalized(),
-		Vector3(1, -phi, 0).normalized(),
-		Vector3(phi, 0, -1).normalized(),
-		Vector3(0, 1, -phi).normalized(),
-		Vector3(0, -1, -phi).normalized(),
-		Vector3(0, -1, phi).normalized(),
-	]
-
-
-func _up_hint_for_direction(direction: Vector3) -> Vector3:
+func _snap_cardinal_direction(direction: Vector3) -> Vector3:
 	var normalized_direction := direction.normalized()
-	if absf(normalized_direction.dot(Vector3.UP)) > 0.78:
-		return Vector3.FORWARD
-	return Vector3.UP
+	var abs_x := absf(normalized_direction.x)
+	var abs_y := absf(normalized_direction.y)
+	var abs_z := absf(normalized_direction.z)
+	if abs_x >= abs_y and abs_x >= abs_z:
+		return Vector3(signf(normalized_direction.x), 0, 0)
+	if abs_y >= abs_x and abs_y >= abs_z:
+		return Vector3(0, signf(normalized_direction.y), 0)
+	return Vector3(0, 0, signf(normalized_direction.z))
 
 
-func _view_basis_for_direction(direction: Vector3) -> Dictionary:
-	var normalized_direction := direction.normalized()
-	var up_hint := _up_hint_for_direction(normalized_direction)
-	var axis_x: Vector3 = up_hint.cross(normalized_direction).normalized()
-	var axis_y: Vector3 = normalized_direction.cross(axis_x).normalized()
-	return {
-		"axis_x": axis_x,
-		"axis_y": axis_y,
-	}
+func _orthogonalized_up(direction: Vector3, up_hint: Vector3) -> Vector3:
+	var snapped_direction := _snap_cardinal_direction(direction)
+	var up := up_hint - snapped_direction * up_hint.dot(snapped_direction)
+	if up.length_squared() < 0.0001:
+		up = Vector3.FORWARD if absf(snapped_direction.dot(Vector3.UP)) > 0.9 else Vector3.UP
+		up -= snapped_direction * up.dot(snapped_direction)
+	return up.normalized()
 
 func _update_perspective_camera() -> void:
 	var direction := Vector3(
@@ -747,12 +741,12 @@ func _update_perspective_camera() -> void:
 func _update_view_label() -> void:
 	if view_label:
 		view_label.text = current_view
-	_update_die_face_selector()
+	_update_face_selector()
 
 
-func _update_die_face_selector() -> void:
-	if die_face_selector:
-		die_face_selector.set_face(die_face_index + 1, camera_mode == CameraMode.ORTHOGRAPHIC)
+func _update_face_selector() -> void:
+	if face_selector:
+		face_selector.set_face(_face_name_for_direction(face_view_direction), camera_mode == CameraMode.ORTHOGRAPHIC)
 
 func _reset_model() -> void:
 	_cancel_pending_extrude(false)

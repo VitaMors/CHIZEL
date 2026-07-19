@@ -96,16 +96,69 @@ func extrude_surface(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y
 
 	var depth_axis := axis_x.cross(axis_y).normalized()
 	var operation_view_name: String = view_name if view_name != "" else display_view_name
-	_store_extrude_surface(polygon_points, axis_x, axis_y, depth_axis, amount, operation_view_name)
+	var changed := _store_clipped_extrude_surfaces(polygon_points, axis_x, axis_y, depth_axis, amount, operation_view_name)
 	if mirror_x:
 		var mirrored_polygon := PackedVector2Array()
 		for point in polygon_points:
 			mirrored_polygon.append(Vector2(-point.x, point.y))
-		_store_extrude_surface(mirrored_polygon, axis_x, axis_y, depth_axis, amount, operation_view_name)
+		changed += _store_clipped_extrude_surfaces(mirrored_polygon, axis_x, axis_y, depth_axis, amount, operation_view_name)
+	return changed
 
-	var area_steps: int = maxi(1, ceili(absf(_polygon_area(polygon_points)) / (voxel_size * voxel_size)))
+
+func _store_clipped_extrude_surfaces(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3, amount: float, view_name: String = "") -> int:
+	var clipped_shapes: Array = _clip_polygon_to_solid_projection(polygon_points, axis_x, axis_y, depth_axis)
+	if clipped_shapes.is_empty():
+		return 0
+
+	var total_area := 0.0
+	for shape_value in clipped_shapes:
+		var shape: PackedVector2Array = shape_value as PackedVector2Array
+		if shape.size() < 3:
+			continue
+		var area: float = absf(_polygon_area(shape))
+		if area <= 0.0001:
+			continue
+		total_area += area
+		_store_extrude_surface(shape, axis_x, axis_y, depth_axis, amount, view_name)
+
+	if total_area <= 0.0001:
+		return 0
+
+	var area_steps: int = maxi(1, ceili(total_area / (voxel_size * voxel_size)))
 	var depth_steps: int = maxi(1, ceili(absf(amount) / voxel_size))
 	return area_steps * depth_steps
+
+
+func _clip_polygon_to_solid_projection(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> Array:
+	var solid_polygons: Array = _solid_projection_polygons_for_axes(axis_x, axis_y, depth_axis)
+	var clipped_shapes: Array = []
+	for solid_polygon_value in solid_polygons:
+		var solid_polygon: PackedVector2Array = solid_polygon_value as PackedVector2Array
+		var intersections: Array = Geometry2D.intersect_polygons(solid_polygon, polygon_points)
+		for intersection in intersections:
+			var points: PackedVector2Array = intersection as PackedVector2Array
+			if points.size() >= 3 and absf(_polygon_area(points)) > 0.0001:
+				clipped_shapes.append(points)
+	return clipped_shapes
+
+
+func _solid_projection_polygons_for_axes(axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> Array:
+	var polygons: Array = [_projected_cube_rect(axis_x, axis_y)]
+	for surface_value in cut_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if not _surface_matches_axes(surface, axis_x, axis_y, depth_axis):
+			continue
+		var cutter: PackedVector2Array = surface["polygon"] as PackedVector2Array
+		var next_polygons: Array = []
+		for polygon_value in polygons:
+			var source_polygon: PackedVector2Array = polygon_value as PackedVector2Array
+			var clipped: Array = Geometry2D.clip_polygons(source_polygon, cutter)
+			for clipped_polygon in clipped:
+				var clipped_points: PackedVector2Array = clipped_polygon as PackedVector2Array
+				if clipped_points.size() >= 3 and absf(_polygon_area(clipped_points)) > 0.0001:
+					next_polygons.append(clipped_points)
+		polygons = next_polygons
+	return polygons
 
 
 func cut_count() -> int:
@@ -730,8 +783,13 @@ func build_extrusion_overlay_mesh(active_extrusions: Array) -> ArrayMesh:
 		var depth_axis: Vector3 = surface["depth_axis"] as Vector3
 		var surface_depth: float = float(surface["depth_max"])
 		var extruded_depth: float = surface_depth + amount
-		_add_extruded_cap(vertices, normals, colors, indices, polygon, axis_x, axis_y, depth_axis, extruded_depth, depth_axis)
-		_add_surface_extrusion_sides(vertices, normals, colors, indices, polygon, axis_x, axis_y, depth_axis, surface_depth, extruded_depth, amount > 0.0)
+		var clipped_shapes: Array = _clip_polygon_to_solid_projection(polygon, axis_x, axis_y, depth_axis)
+		for clipped_shape_value in clipped_shapes:
+			var clipped_shape: PackedVector2Array = clipped_shape_value as PackedVector2Array
+			if clipped_shape.size() < 3:
+				continue
+			_add_extruded_cap(vertices, normals, colors, indices, clipped_shape, axis_x, axis_y, depth_axis, extruded_depth, depth_axis)
+			_add_surface_extrusion_sides(vertices, normals, colors, indices, clipped_shape, axis_x, axis_y, depth_axis, surface_depth, extruded_depth, amount > 0.0)
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
