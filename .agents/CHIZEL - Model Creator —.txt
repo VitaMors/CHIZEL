@@ -1,0 +1,827 @@
+CHIZEL - Model Creator — Build Blueprint
+
+## Project Goal
+
+Build a simple standalone 3D low-poly model creator focused on **carving shapes from primitive blocks**, instead of using complicated Blender-style modelling tools.
+
+The core interaction should feel like a combination of:
+
+* Blender’s primitive cube starting point
+* Photoshop’s polygon lasso tool
+* Ancient marble carving / subtractive sculpting
+* RuneScape-style low-poly asset creation
+
+The main tool is called **Chisel**.
+
+Users should be able to start with a cube, view it from fixed orthographic directions, draw a polygon selection over part of the model, and remove the selected material through the model.
+
+The app should be intentionally simple and not attempt to replicate Blender.
+
+---
+
+# Core Product Identity
+
+> “Carve low-poly 3D models from blocks using simple blueprint views.”
+
+The user should feel like they are sculpting an object out of stone, wood, clay, or marble.
+
+The workflow should be:
+
+1. Start with a primitive.
+2. Look at it from a fixed direction.
+3. Draw a lasso shape.
+4. Cut away the material.
+5. Repeat from other directions.
+6. Add primitive pieces when required.
+7. Paint colours/materials.
+8. Export the finished model.
+
+---
+
+# Required Tech Direction
+
+Use:
+
+* Godot 4.x
+* GDScript
+* A standalone Windows desktop application
+* Godot’s 3D scene system
+* Orthographic cameras for modelling views
+* MeshInstance3D for rendered models
+* ArrayMesh or SurfaceTool for generated meshes
+* GridMap, voxel-like storage, or custom block-volume storage for the carving system
+
+Do not build this as a browser app.
+
+The project should be structured so it can later export `.glb`, `.obj`, or a custom WorldSmith model format.
+
+---
+
+# Main App Layout
+
+The application opens into a modelling workspace.
+
+Layout:
+
+```text
+┌────────────────────────────────────────────────────────────────┐
+│ File   Edit   View   Model   Export                             │
+├───────────────┬────────────────────────────────────────────────┤
+│ TOOLBAR       │                                                │
+│               │              3D VIEWPORT                       │
+│ [Select]      │                                                │
+│ [Chisel]      │          Rotatable perspective preview         │
+│ [Add Block]   │                                                │
+│ [Push/Pull]   │                                                │
+│ [Paint]       │                                                │
+│ [Mirror]      │                                                │
+│               │                                                │
+├───────────────┼────────────────────────────────────────────────┤
+│ PRIMITIVES    │      FRONT   BACK   LEFT   RIGHT   TOP   BOTTOM │
+│               │          Orthographic view buttons             │
+│ Cube          │                                                │
+│ Cylinder      │                                                │
+│ Sphere        │                                                │
+│ Wedge         │                                                │
+├───────────────┴────────────────────────────────────────────────┤
+│ Undo   Redo   Save   Load   Export                              │
+└────────────────────────────────────────────────────────────────┘
+```
+
+The centre viewport is the main 3D perspective preview.
+
+The six direction buttons switch to locked orthographic modelling views:
+
+* Front
+* Back
+* Left
+* Right
+* Top
+* Bottom
+
+When in one of these views, the user cannot accidentally rotate the camera.
+
+This is important because Chisel cuts need to remain predictable.
+
+---
+
+# Camera System
+
+Create two camera modes.
+
+## Perspective Preview Camera
+
+Used for:
+
+* Inspecting the object in 3D
+* Orbiting around the model
+* Zooming in and out
+* Seeing the result of cuts
+* Checking proportions
+
+Controls:
+
+* Middle mouse drag = orbit
+* Mouse wheel = zoom
+* Shift + middle mouse = pan
+* Right mouse click = optional camera reset menu
+
+## Orthographic Modelling Camera
+
+Used for:
+
+* Chisel
+* Face selection
+* Push/Pull
+* Accurate silhouette shaping
+
+Views:
+
+```text
+Front  = looking along negative Z
+Back   = looking along positive Z
+Left   = looking along positive X
+Right  = looking along negative X
+Top    = looking down negative Y
+Bottom = looking up positive Y
+```
+
+Each view should show:
+
+* A faint grid
+* Axis labels
+* The current model silhouette
+* A visible selection lasso while drawing
+* Optional symmetry guide down the centre
+
+---
+
+# Core Model Representation
+
+Do not rely entirely on destructive mesh booleans.
+
+Use a voxel-like internal volume system.
+
+Each starting primitive should be converted into a 3D grid of small blocks.
+
+Example default resolution:
+
+```text
+32 x 32 x 32 blocks
+```
+
+Higher quality options later:
+
+```text
+16 x 16 x 16 = rough blocky assets
+32 x 32 x 32 = standard low-poly assets
+64 x 64 x 64 = more detailed assets
+```
+
+Each cell stores whether it is:
+
+```text
+empty
+solid
+painted material index
+```
+
+Example cell structure:
+
+```gdscript
+class_name VoxelCell
+
+var is_solid: bool = true
+var material_index: int = 0
+```
+
+The visible mesh should be rebuilt from the volume after every carve.
+
+Only render outer faces that touch empty space.
+
+Do not render internal faces.
+
+This avoids broken topology and keeps the Chisel system reliable.
+
+---
+
+# Chisel Tool
+
+## Tool Purpose
+
+The Chisel tool removes material from the current model.
+
+It should behave like a polygon lasso selection.
+
+The user clicks multiple points in the active orthographic view.
+
+Once the shape is closed, the selected area becomes a cutting volume travelling through the model.
+
+Everything inside that cutting volume is removed.
+
+---
+
+# Chisel Interaction
+
+## Step 1: Enter Chisel Mode
+
+User clicks:
+
+```text
+[ Chisel ]
+```
+
+Cursor changes to a chisel/lasso icon.
+
+The current orthographic camera view becomes the active cutting direction.
+
+## Step 2: Place Polygon Points
+
+User clicks points on screen.
+
+Each click adds a point.
+
+Show:
+
+* Small circular point handles
+* Lines connecting each point
+* A transparent filled preview inside the lasso
+* A highlighted first point so the user knows where to close it
+
+Example:
+
+```text
+Click 1 → point appears
+Click 2 → line appears
+Click 3 → triangle preview appears
+Click more points → polygon grows
+```
+
+## Step 3: Close the Shape
+
+The lasso closes when:
+
+* User clicks the first point again
+* User presses Enter
+* User double-clicks after at least 3 points
+
+If the polygon has fewer than 3 points, cancel it.
+
+## Step 4: Convert 2D Shape Into a 3D Cutting Volume
+
+The lasso must be projected through the entire model along the active camera direction.
+
+Examples:
+
+```text
+Front view:
+The lasso cuts from front to back through the Z axis.
+
+Top view:
+The lasso cuts from top to bottom through the Y axis.
+
+Left view:
+The lasso cuts left to right through the X axis.
+```
+
+The selected 2D polygon should be converted into model-local coordinates.
+
+For every voxel cell:
+
+1. Convert the voxel centre into the active view’s 2D coordinate space.
+2. Test whether that point lies inside the lasso polygon.
+3. If it is inside, remove the voxel.
+4. Rebuild the visible mesh.
+
+Pseudo-code:
+
+```gdscript
+for voxel in voxel_grid:
+    var projected_position = project_voxel_into_active_view(voxel.position)
+
+    if point_inside_polygon(projected_position, lasso_points):
+        voxel.is_solid = false
+
+rebuild_model_mesh()
+```
+
+---
+
+# Chisel Modes
+
+The Chisel tool should have several modes.
+
+## Through Cut
+
+Default mode.
+
+The lasso removes material all the way through the object.
+
+```text
+Front view lasso = cuts through Z axis
+Top view lasso = cuts through Y axis
+Left view lasso = cuts through X axis
+```
+
+## Depth Cut
+
+User can choose a cut depth.
+
+Example:
+
+```text
+Depth: 25%
+Depth: 50%
+Depth: 75%
+Depth: Through
+```
+
+A depth slider controls how far into the object the cut travels.
+
+This lets users create:
+
+* Eye sockets
+* Indented armour plates
+* Doorways
+* Grooves
+* Window holes
+* Carved symbols
+
+## Invert Cut
+
+Instead of removing inside the lasso, remove everything outside it.
+
+This is useful for rapidly reducing a cube into a silhouette.
+
+Example:
+
+* Start with a cube.
+* Draw a character side profile.
+* Invert cut.
+* Remove everything outside that profile.
+* Repeat from front view.
+
+## Soft Edge Mode
+
+Optional future mode.
+
+Instead of a perfectly square voxel edge, smooth the rebuilt mesh slightly.
+
+This should remain subtle because the target visual style is low-poly.
+
+---
+
+# Chisel Rules
+
+The Chisel must:
+
+* Never remove cells outside the active model bounds.
+* Never crash when the lasso overlaps empty space.
+* Always allow Undo.
+* Keep mesh generation stable.
+* Remove only cells whose projected centre lies inside the polygon.
+* Show a semi-transparent preview before confirming cuts.
+* Allow Escape to cancel the current lasso.
+* Allow Backspace to remove the last placed lasso point.
+* Allow Ctrl + Z to undo the previous completed cut.
+
+---
+
+# Primitive Tools
+
+The app must support starting and adding basic shapes.
+
+## Starting Primitives
+
+New model menu:
+
+```text
+New Cube
+New Cylinder
+New Sphere
+New Wedge
+New Capsule
+```
+
+Each primitive should become a voxel volume.
+
+## Add Primitive Tool
+
+The Add Primitive tool lets the user attach new blocks to the existing model.
+
+Options:
+
+```text
+Cube
+Cylinder
+Sphere
+Wedge
+Cone
+Capsule
+```
+
+User workflow:
+
+1. Select primitive type.
+2. Position it in the 3D viewport.
+3. Scale it.
+4. Rotate it.
+5. Confirm placement.
+6. Convert primitive into voxels.
+7. Merge it into the main volume.
+
+This is needed for things that are difficult to create through subtraction alone:
+
+* Arms
+* Legs
+* Sword handles
+* Horns
+* Chair legs
+* Tree branches
+* Weapon guards
+* Character hair chunks
+
+---
+
+# Push/Pull Tool
+
+The Push/Pull tool should work on visible surface faces.
+
+User clicks a visible face.
+
+A gizmo or arrow appears.
+
+Dragging outward adds material.
+
+Dragging inward removes material.
+
+This can initially work in grid increments.
+
+Example:
+
+```text
+Drag 1 grid unit = add/remove 1 voxel layer
+Drag 4 grid units = add/remove 4 voxel layers
+```
+
+Use cases:
+
+* Extend limbs
+* Build walls
+* Create handles
+* Pull out noses
+* Form weapon blades
+* Adjust building roofs
+
+---
+
+# Mirror Tool
+
+Mirror mode is essential.
+
+The user should be able to model only one side of an object.
+
+Mirroring options:
+
+```text
+Mirror X
+Mirror Y
+Mirror Z
+```
+
+Most common:
+
+```text
+Mirror X
+```
+
+This creates symmetrical character heads, torsos, helmets, armour, creatures, and weapons.
+
+When active:
+
+* Every Chisel operation is repeated on the opposite side.
+* Every Add Primitive placement is duplicated.
+* Every Push/Pull change is duplicated.
+* Paint can optionally mirror too.
+
+The mirror plane should be visible as a faint coloured centre line.
+
+---
+
+# Paint Tool
+
+The Paint tool applies flat materials to visible surfaces.
+
+Keep this simple.
+
+Do not build a complex UV editor.
+
+Use per-voxel or per-face material indices.
+
+Basic palette system:
+
+```text
+Material 0 = Default stone
+Material 1 = Dark grey
+Material 2 = Light grey
+Material 3 = Skin
+Material 4 = Hair
+Material 5 = Cloth
+Material 6 = Metal
+Material 7 = Wood
+Material 8 = Grass
+Material 9 = Water
+```
+
+Users should be able to:
+
+* Create colours
+* Rename materials
+* Apply materials to visible faces
+* Use a fill tool
+* Use a brush tool
+* Use a colour picker
+
+Initial rendering should use:
+
+* Flat shading
+* No realistic textures required
+* Optional subtle ambient occlusion
+* Optional simple directional light
+* Optional outline mode
+
+This fits the WorldSmith low-poly art direction.
+
+---
+
+# Mesh Rebuild System
+
+After each edit, rebuild the surface mesh.
+
+Rules:
+
+1. Only create faces where a solid voxel touches an empty voxel.
+2. Merge adjacent coplanar faces later if possible.
+3. Assign material colours based on voxel material index.
+4. Use flat normals by default.
+5. Avoid internal geometry.
+6. Keep mesh rebuild responsive for 32³ volumes.
+
+Initial simple approach:
+
+```text
+For each solid voxel:
+    Check all 6 neighbouring cells.
+    If neighbour is empty:
+        Add a visible quad for that side.
+```
+
+Later optimisation:
+
+```text
+Greedy meshing:
+Merge neighbouring voxel faces into larger quads.
+```
+
+This reduces polygon count and produces cleaner low-poly assets.
+
+---
+
+# Required Data Structures
+
+```gdscript
+class_name ModelVolume
+
+var grid_size: Vector3i
+var voxel_size: float
+var voxels: Array
+var materials: Array[ModelMaterial]
+var model_name: String
+```
+
+```gdscript
+class_name ModelMaterial
+
+var material_name: String
+var color: Color
+var metallic: float
+var roughness: float
+```
+
+```gdscript
+class_name ChiselOperation
+
+var view_direction: String
+var polygon_points: PackedVector2Array
+var cut_depth: float
+var invert_cut: bool
+var timestamp: int
+```
+
+Keep an edit history stack for Undo/Redo.
+
+Do not store only mesh changes.
+
+Store voxel changes or operation history.
+
+---
+
+# Undo / Redo
+
+Every modelling action must support Undo and Redo.
+
+Actions to support:
+
+* Chisel cut
+* Add primitive
+* Delete primitive
+* Push/Pull
+* Paint change
+* Mirror toggle
+* Transform change
+
+Keyboard shortcuts:
+
+```text
+Ctrl + Z = Undo
+Ctrl + Y = Redo
+Ctrl + Shift + Z = Redo
+Delete = remove selected primitive or selection
+Escape = cancel current action
+Enter = confirm lasso cut
+```
+
+---
+
+# File System
+
+Save models in a custom editable format.
+
+Suggested extension:
+
+```text
+.worldmodel
+```
+
+A `.worldmodel` file should contain:
+
+```text
+Model name
+Grid resolution
+Voxel size
+Voxel solid/empty data
+Material palette
+Material assignments
+Primitive metadata if needed
+Thumbnail preview
+Version number
+```
+
+Export formats later:
+
+```text
+.glb
+.obj
+.fbx optional later
+```
+
+The first export target should be `.glb`.
+
+Reason:
+
+* Works well with Godot
+* Works in Blender
+* Works in many game engines
+* Can include materials
+* Better modern workflow than OBJ alone
+
+---
+
+# First Build Milestone
+
+Build this first before adding advanced features.
+
+## Milestone 1: Cube Carving Prototype
+
+Required features:
+
+* Open application into one modelling scene.
+* Spawn one cube.
+* Show a perspective camera.
+* Add Front, Back, Left, Right, Top, Bottom buttons.
+* Switch between perspective and orthographic views.
+* Add visible modelling grid.
+* Add Chisel button.
+* Allow clicking polygon lasso points.
+* Allow Enter or clicking first point to close lasso.
+* Project polygon through the cube.
+* Remove selected voxels.
+* Rebuild cube mesh.
+* Add Undo.
+* Add Reset Model button.
+
+Success test:
+
+```text
+User can begin with a cube,
+switch to Front view,
+draw a triangular lasso over the upper corners,
+confirm the cut,
+and create a roof/wedge-like shape.
+```
+
+Then user can rotate to another view and continue shaping it.
+
+---
+
+# Second Build Milestone
+
+Add:
+
+* Depth cut slider
+* Invert cut
+* Add Cube primitive
+* Add Cylinder primitive
+* Transform gizmo
+* Mirror X
+* Save/load `.worldmodel`
+* Basic flat material painting
+* Export `.glb`
+
+Success test:
+
+```text
+User can create a simple low-poly sword,
+chair,
+tree,
+house,
+or humanoid head
+without needing Blender.
+```
+
+---
+
+# Third Build Milestone
+
+Add:
+
+* Greedy meshing optimisation
+* Better material palette
+* Ambient occlusion
+* Simple outline shader
+* Snap-to-grid controls
+* Asset thumbnail browser
+* Preset templates
+* Character body base template
+* Building base template
+* Weapon base template
+* Creature base template
+
+---
+
+# Important Design Rules
+
+Do not turn this into Blender.
+
+Avoid:
+
+* Complex modifier stacks
+* UV unwrapping
+* Shader node graphs
+* Advanced rigging in the first version
+* Hundreds of toolbar icons
+* Overly technical menus
+* Complicated topology editing
+* Manual vertex-by-vertex modelling
+
+Prioritise:
+
+* Clear visual feedback
+* Fast carving
+* Grid snapping
+* Predictable operations
+* Low-poly game asset output
+* Easy model creation for beginners
+* Strong undo system
+* Simple primitives
+* Fixed blueprint views
+
+The user should be able to understand the entire app in five minutes.
+
+---
+
+# Product Philosophy
+
+The app should feel like this:
+
+```text
+Start with stone.
+Cut away what does not belong.
+Add blocks only when needed.
+Keep the shape readable.
+Export a game-ready model.
+```
+
+The Chisel is the main identity of the editor.
+
+Everything else should support that workflow rather than distract from it.
