@@ -20,6 +20,7 @@ var perspective_camera: Camera3D
 var ortho_camera: Camera3D
 var active_camera: Camera3D
 var light: DirectionalLight3D
+var view_light: DirectionalLight3D
 var lasso_overlay
 var reference_overlay
 var status_label: Label
@@ -78,7 +79,9 @@ func _setup_world() -> void:
 	model_material = StandardMaterial3D.new()
 	model_material.vertex_color_use_as_albedo = true
 	model_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	model_material.roughness = 0.86
+	model_material.diffuse_mode = BaseMaterial3D.DIFFUSE_LAMBERT_WRAP
+	model_material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	model_material.roughness = 0.72
 
 	model_mesh = MeshInstance3D.new()
 	model_mesh.name = "Shell Model"
@@ -98,16 +101,22 @@ func _setup_world() -> void:
 
 	light = DirectionalLight3D.new()
 	light.rotation_degrees = Vector3(-45, -35, 0)
-	light.light_energy = 2.0
+	light.light_energy = 1.25
 	add_child(light)
+
+	view_light = DirectionalLight3D.new()
+	view_light.name = "Camera Fill Light"
+	view_light.light_energy = 0.85
+	view_light.shadow_enabled = false
+	add_child(view_light)
 
 	var world_environment := WorldEnvironment.new()
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.07, 0.075, 0.08, 1)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.55, 0.58, 0.62, 1)
-	environment.ambient_light_energy = 0.65
+	environment.ambient_light_color = Color(0.68, 0.71, 0.74, 1)
+	environment.ambient_light_energy = 0.9
 	world_environment.environment = environment
 	add_child(world_environment)
 
@@ -684,6 +693,7 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 	face_view_up = _orthogonalized_up(face_view_direction, up_hint)
 	ortho_camera.position = face_view_direction * FACE_CAMERA_DISTANCE
 	ortho_camera.look_at(Vector3.ZERO, face_view_up)
+	_update_view_light()
 	volume.set_display_axes(ortho_camera.global_transform.basis.x.normalized(), ortho_camera.global_transform.basis.y.normalized(), current_view)
 	_rebuild_model_mesh()
 	_build_grid()
@@ -729,6 +739,13 @@ func _update_perspective_camera() -> void:
 	)
 	perspective_camera.position = orbit_target + direction * orbit_distance
 	perspective_camera.look_at(orbit_target, Vector3.UP)
+	_update_view_light()
+
+
+func _update_view_light() -> void:
+	if view_light == null or active_camera == null:
+		return
+	view_light.global_transform = active_camera.global_transform
 
 
 func _update_view_label() -> void:

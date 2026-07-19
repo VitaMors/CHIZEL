@@ -213,8 +213,6 @@ func apply_lasso_operation(polygon_points: PackedVector2Array, axis_x: Vector3, 
 		if changed > 0:
 			cut_surfaces.clear()
 	elif not invert_cut:
-		if changed > 0:
-			changed += clean_solid_body(false)
 		_store_cut_surface(polygon_points, axis_x, axis_y, depth_axis, cut_view_name)
 		if mirror_x:
 			var mirrored_polygon := PackedVector2Array()
@@ -393,6 +391,8 @@ func _build_cut_mesh() -> ArrayMesh:
 		return build_exact_cut_mesh(cut_surfaces)
 
 	var fallback_surfaces: Array = _latest_projection_surfaces()
+	if _surfaces_include_non_axis_aligned(cut_surfaces):
+		return build_grid_shell_mesh(true)
 	if has_display_axes:
 		var visible_surfaces: Array = _visible_cut_surfaces()
 		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size() and _surfaces_can_use_exact_projection(visible_surfaces):
@@ -421,13 +421,21 @@ func build_base_poly_mesh() -> ArrayMesh:
 func _surfaces_can_use_exact_projection(active_surfaces: Array) -> bool:
 	if active_surfaces.is_empty():
 		return false
-	var first_surface: Dictionary = active_surfaces[0] as Dictionary
-	return _surface_projection_is_axis_aligned(first_surface)
+	return not _surfaces_include_non_axis_aligned(active_surfaces)
 
 
 func _surface_projection_is_axis_aligned(surface: Dictionary) -> bool:
 	var depth_axis: Vector3 = surface["depth_axis"] as Vector3
 	return absf(depth_axis.x) > 0.999 or absf(depth_axis.y) > 0.999 or absf(depth_axis.z) > 0.999
+
+
+func _surfaces_include_non_axis_aligned(active_surfaces: Array) -> bool:
+	for surface_value in active_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if not _surface_projection_is_axis_aligned(surface):
+			return true
+	return false
+
 
 func _surface_operations_share_projection() -> bool:
 	var operations: Array = []
@@ -440,8 +448,6 @@ func _surface_operations_share_projection() -> bool:
 	var first_axis_x: Vector3 = first_surface["axis_x"] as Vector3
 	var first_axis_y: Vector3 = first_surface["axis_y"] as Vector3
 	var first_depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
-	if not _surface_projection_is_axis_aligned(first_surface):
-		return false
 	for operation_value in operations:
 		var operation: Dictionary = operation_value as Dictionary
 		if not _surface_matches_axes(operation, first_axis_x, first_axis_y, first_depth_axis):
@@ -454,8 +460,6 @@ func _cut_surfaces_share_projection() -> bool:
 		return false
 
 	var first_surface: Dictionary = cut_surfaces[0] as Dictionary
-	if not _surface_projection_is_axis_aligned(first_surface):
-		return false
 	var first_group: String = _surface_view_group(first_surface)
 	if first_group != "":
 		for surface_value in cut_surfaces:
