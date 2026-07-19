@@ -18,6 +18,13 @@ func set_reference_texture(next_texture: Texture2D) -> void:
 	fit_to_view()
 
 
+func set_reference_state(next_texture: Texture2D, next_scale: float, next_offset: Vector2) -> void:
+	reference_texture = next_texture
+	image_scale = clampf(next_scale, 0.05, 8.0)
+	image_offset = next_offset
+	queue_redraw()
+
+
 func set_active(next_active: bool) -> void:
 	active = next_active
 	queue_redraw()
