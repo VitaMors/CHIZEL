@@ -471,7 +471,7 @@ func _build_cut_mesh() -> ArrayMesh:
 		return build_exact_cut_mesh(cut_surfaces)
 
 	if _surfaces_include_non_axis_aligned(cut_surfaces):
-		return build_low_poly_mesh()
+		return build_analytic_cut_mesh()
 
 	return build_grid_shell_mesh(false)
 
@@ -1216,6 +1216,117 @@ func build_low_poly_mesh() -> ArrayMesh:
 	if vertices.size() > 0:
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
+
+
+func build_analytic_cut_mesh(sample_multiplier: int = 1) -> ArrayMesh:
+	var multiplier: int = maxi(1, sample_multiplier)
+	var sample_size: float = voxel_size / float(multiplier)
+	var sample_grid_size := grid_size * multiplier
+	var padded_size := sample_grid_size + Vector3i(3, 3, 3)
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	var scalar_field := _build_analytic_cut_scalar_field(padded_size, sample_size)
+	var cube_corners := [
+		Vector3i(0, 0, 0),
+		Vector3i(1, 0, 0),
+		Vector3i(0, 1, 0),
+		Vector3i(1, 1, 0),
+		Vector3i(0, 0, 1),
+		Vector3i(1, 0, 1),
+		Vector3i(0, 1, 1),
+		Vector3i(1, 1, 1),
+	]
+	var tetrahedra := [
+		[0, 5, 1, 6],
+		[0, 1, 2, 6],
+		[0, 2, 3, 6],
+		[0, 3, 7, 6],
+		[0, 7, 4, 6],
+		[0, 4, 5, 6],
+	]
+
+	for z in range(padded_size.z - 1):
+		for y in range(padded_size.y - 1):
+			for x in range(padded_size.x - 1):
+				var corner_positions: Array[Vector3] = []
+				var corner_values: Array[float] = []
+				for offset in cube_corners:
+					var point := Vector3i(x + offset.x, y + offset.y, z + offset.z)
+					corner_positions.append(_analytic_grid_to_world(point, sample_size))
+					corner_values.append(scalar_field[_scalar_index(point, padded_size)])
+
+				for tetra in tetrahedra:
+					var tetra_positions: Array[Vector3] = []
+					var tetra_values: Array[float] = []
+					for corner_index in tetra:
+						tetra_positions.append(corner_positions[corner_index])
+						tetra_values.append(corner_values[corner_index])
+					_add_tetra_surface(vertices, normals, colors, indices, tetra_positions, tetra_values)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	if vertices.size() > 0:
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _build_analytic_cut_scalar_field(padded_size: Vector3i, sample_size: float) -> PackedFloat32Array:
+	var scalar_field := PackedFloat32Array()
+	scalar_field.resize(padded_size.x * padded_size.y * padded_size.z)
+	for z in range(padded_size.z):
+		for y in range(padded_size.y):
+			for x in range(padded_size.x):
+				var point := Vector3i(x, y, z)
+				var world_point := _analytic_grid_to_world(point, sample_size)
+				scalar_field[_scalar_index(point, padded_size)] = _analytic_cut_scalar(world_point)
+	return scalar_field
+
+
+func _analytic_grid_to_world(point: Vector3i, sample_size: float) -> Vector3:
+	var half := Vector3(grid_size.x, grid_size.y, grid_size.z) * voxel_size * 0.5
+	return Vector3(point.x - 1, point.y - 1, point.z - 1) * sample_size - half
+
+
+func _analytic_cut_scalar(world_point: Vector3) -> float:
+	var half := Vector3(grid_size.x, grid_size.y, grid_size.z) * voxel_size * 0.5
+	var cube_scalar: float = minf(half.x - absf(world_point.x), minf(half.y - absf(world_point.y), half.z - absf(world_point.z)))
+	var solid_scalar := cube_scalar
+	for surface_value in cut_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		var polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
+		if polygon.size() < 3:
+			continue
+		var axis_x: Vector3 = surface["axis_x"] as Vector3
+		var axis_y: Vector3 = surface["axis_y"] as Vector3
+		var depth_axis: Vector3 = surface["depth_axis"] as Vector3
+		var point_2d := Vector2(world_point.dot(axis_x), world_point.dot(axis_y))
+		var polygon_keep_scalar := _signed_polygon_outside_distance(point_2d, polygon)
+		var depth: float = world_point.dot(depth_axis)
+		var depth_min: float = float(surface["depth_min"])
+		var depth_max: float = float(surface["depth_max"])
+		var depth_keep_scalar: float = maxf(depth_min - depth, depth - depth_max)
+		var cut_keep_scalar: float = maxf(polygon_keep_scalar, depth_keep_scalar)
+		solid_scalar = minf(solid_scalar, cut_keep_scalar)
+	return solid_scalar
+
+
+func _signed_polygon_outside_distance(point: Vector2, polygon: PackedVector2Array) -> float:
+	var min_distance := INF
+	for index in range(polygon.size()):
+		var a: Vector2 = polygon[index]
+		var b: Vector2 = polygon[(index + 1) % polygon.size()]
+		min_distance = minf(min_distance, _distance_to_segment(point, a, b))
+	if Geometry2D.is_point_in_polygon(point, polygon):
+		return -min_distance
+	return min_distance
 
 
 func _build_scalar_field(padded_size: Vector3i) -> PackedFloat32Array:
