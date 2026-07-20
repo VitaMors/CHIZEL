@@ -107,13 +107,8 @@ func extrude_surface(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y
 	var operation_view_name: String = view_name if view_name != "" else display_view_name
 	var changed := _store_clipped_extrude_surfaces(polygon_points, axis_x, axis_y, depth_axis, amount, operation_view_name)
 	if mirror_x:
-		var mirrored_polygon := PackedVector2Array()
-		for point in polygon_points:
-			mirrored_polygon.append(Vector2(-point.x, point.y))
-		var mirrored_axis_x := -_mirror_x_axis(axis_x)
-		var mirrored_axis_y := _mirror_x_axis(axis_y)
-		var mirrored_depth_axis := _mirror_x_axis(depth_axis)
-		changed += _store_clipped_extrude_surfaces(mirrored_polygon, mirrored_axis_x, mirrored_axis_y, mirrored_depth_axis, amount, operation_view_name)
+		var mirrored_polygon := _mirrored_view_polygon(polygon_points)
+		changed += _store_clipped_extrude_surfaces(mirrored_polygon, axis_x, axis_y, depth_axis, amount, operation_view_name)
 	return changed
 
 
@@ -173,8 +168,12 @@ func _polygons_overlap(a: PackedVector2Array, b: PackedVector2Array) -> bool:
 	return false
 
 
-func _mirror_x_axis(axis: Vector3) -> Vector3:
-	return Vector3(-axis.x, axis.y, axis.z).normalized()
+func _mirrored_view_polygon(polygon_points: PackedVector2Array) -> PackedVector2Array:
+	var mirrored_polygon := PackedVector2Array()
+	for point in polygon_points:
+		mirrored_polygon.append(Vector2(-point.x, point.y))
+	return mirrored_polygon
+
 
 func _clip_polygon_to_solid_projection(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> Array:
 	var solid_polygons: Array = _solid_projection_polygons_for_axes(axis_x, axis_y, depth_axis)
@@ -265,11 +264,10 @@ func apply_lasso_operation(polygon_points: PackedVector2Array, axis_x: Vector3, 
 	var mirrored_depth_axis := Vector3.ZERO
 
 	if mirror_x:
-		for point in polygon_points:
-			mirrored_polygon.append(Vector2(-point.x, point.y))
-		mirrored_axis_x = -_mirror_x_axis(axis_x)
-		mirrored_axis_y = _mirror_x_axis(axis_y)
-		mirrored_depth_axis = _mirror_x_axis(depth_axis)
+		mirrored_polygon = _mirrored_view_polygon(polygon_points)
+		mirrored_axis_x = axis_x
+		mirrored_axis_y = axis_y
+		mirrored_depth_axis = depth_axis
 		mirrored_changed = _apply_lasso_projection(mirrored_polygon, mirrored_axis_x, mirrored_axis_y, add_material, invert_cut)
 		changed += mirrored_changed
 
@@ -479,7 +477,7 @@ func build_base_poly_mesh() -> ArrayMesh:
 
 
 func _surfaces_can_use_exact_projection(active_surfaces: Array) -> bool:
-	if active_surfaces.is_empty() or _surfaces_include_non_axis_aligned(active_surfaces):
+	if active_surfaces.is_empty():
 		return false
 
 	var first_surface: Dictionary = active_surfaces[0] as Dictionary
