@@ -14,6 +14,7 @@ var display_axis_y: Vector3 = Vector3.UP
 var display_depth_axis: Vector3 = Vector3.FORWARD
 var display_view_name: String = ""
 var cut_face_hiding_enabled: bool = true
+var cut_face_patch_surfaces: Array = []
 var materials: Array[Color] = [
 	Color(0.62, 0.63, 0.62, 1.0),
 	Color(0.18, 0.19, 0.21, 1.0),
@@ -469,7 +470,8 @@ func _build_cut_mesh() -> ArrayMesh:
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	return build_grid_shell_mesh(false)
+	var patch_surfaces := _patch_surfaces_for_mixed_cut_mesh()
+	return build_grid_shell_mesh(not patch_surfaces.is_empty(), patch_surfaces)
 
 
 func build_base_poly_mesh() -> ArrayMesh:
@@ -507,6 +509,15 @@ func _surfaces_include_non_axis_aligned(active_surfaces: Array) -> bool:
 		if not _surface_projection_is_axis_aligned(surface):
 			return true
 	return false
+
+
+func _patch_surfaces_for_mixed_cut_mesh() -> Array:
+	var patch_surfaces: Array = []
+	for surface_value in cut_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if not _surface_projection_is_axis_aligned(surface):
+			patch_surfaces.append(surface)
+	return patch_surfaces
 
 
 func _surface_operations_share_projection() -> bool:
@@ -1117,8 +1128,11 @@ func _polygon_area(polygon: PackedVector2Array) -> float:
 	return area * 0.5
 
 
-func build_grid_shell_mesh(include_cut_plane_patches: bool = true) -> ArrayMesh:
-	cut_face_hiding_enabled = include_cut_plane_patches
+func build_grid_shell_mesh(include_cut_plane_patches: bool = true, patch_surfaces: Array = []) -> ArrayMesh:
+	cut_face_patch_surfaces = patch_surfaces.duplicate()
+	if include_cut_plane_patches and cut_face_patch_surfaces.is_empty():
+		cut_face_patch_surfaces = cut_surfaces.duplicate()
+	cut_face_hiding_enabled = include_cut_plane_patches and not cut_face_patch_surfaces.is_empty()
 	var vertices := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -1127,9 +1141,10 @@ func build_grid_shell_mesh(include_cut_plane_patches: bool = true) -> ArrayMesh:
 	for normal_axis in range(3):
 		_build_greedy_axis(vertices, normals, colors, indices, normal_axis, 1)
 		_build_greedy_axis(vertices, normals, colors, indices, normal_axis, -1)
-	if include_cut_plane_patches:
-		_add_cut_plane_patches(vertices, normals, colors, indices)
+	if cut_face_hiding_enabled:
+		_add_cut_plane_patches(vertices, normals, colors, indices, cut_face_patch_surfaces)
 	cut_face_hiding_enabled = true
+	cut_face_patch_surfaces = []
 
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -1455,8 +1470,8 @@ func _store_extrude_surface(polygon_points: PackedVector2Array, axis_x: Vector3,
 		"view_group": _canonical_view_group(view_name),
 	})
 
-func _add_cut_plane_patches(vertices: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array) -> void:
-	for surface in cut_surfaces:
+func _add_cut_plane_patches(vertices: PackedVector3Array, normals: PackedVector3Array, colors: PackedColorArray, indices: PackedInt32Array, active_surfaces: Array) -> void:
+	for surface in active_surfaces:
 		var polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
 		if polygon.size() < 3:
 			continue
@@ -1537,7 +1552,7 @@ func _add_cut_quad_run(vertices: PackedVector3Array, normals: PackedVector3Array
 
 
 func _should_hide_grid_face_on_cut(world_point: Vector3) -> bool:
-	for surface in cut_surfaces:
+	for surface in cut_face_patch_surfaces:
 		var polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
 		var axis_x: Vector3 = surface["axis_x"] as Vector3
 		var axis_y: Vector3 = surface["axis_y"] as Vector3
