@@ -8,7 +8,7 @@ var active := false
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(96, 112)
+	custom_minimum_size = Vector2(112, 124)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 
@@ -33,7 +33,7 @@ func _draw() -> void:
 	draw_rect(rect.grow(-1.0), border_color, false, 1.6)
 
 	_draw_label(text_color, accent_color)
-	_draw_cube(Vector2(size.x * 0.5, size.y * 0.68), minf(size.x, size.y) * 0.22, active)
+	_draw_cube(Vector2(size.x * 0.5, size.y * 0.73), minf(size.x, size.y) * 0.20, active)
 
 
 func _draw_label(text_color: Color, accent_color: Color) -> void:
@@ -41,11 +41,15 @@ func _draw_label(text_color: Color, accent_color: Color) -> void:
 	var label := face_label.to_upper()
 	var words := label.split(" ")
 	var font_size := 15
-	if words.size() > 1:
+	if words.size() == 2:
 		font_size = 13
+	elif words.size() == 3:
+		font_size = 11
+	elif words.size() > 3:
+		font_size = 10
 	var line_height := float(font_size) * 1.02
 	var block_height := line_height * float(words.size())
-	var start_y := 12.0 + (34.0 - block_height) * 0.5
+	var start_y := 8.0 + (44.0 - block_height) * 0.5
 	for index in range(words.size()):
 		var word := String(words[index])
 		var text_size := font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
@@ -53,7 +57,7 @@ func _draw_label(text_color: Color, accent_color: Color) -> void:
 		draw_string(font, text_position + Vector2(1, 1), word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.0, 0.0, 0.0, 0.88))
 		draw_string(font, text_position, word, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, text_color)
 
-	var underline_y := 50.0
+	var underline_y := 56.0
 	draw_line(Vector2(size.x * 0.22, underline_y), Vector2(size.x * 0.78, underline_y), accent_color, 2.0, true)
 
 

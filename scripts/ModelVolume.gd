@@ -598,42 +598,101 @@ func _surface_matches_display_view(surface: Dictionary) -> bool:
 
 
 func build_combined_cut_mesh() -> ArrayMesh:
-	var surfaces_by_view: Dictionary = {}
+	var pieces: Array = [_cube_polyhedron_faces()]
 	for surface_value in cut_surfaces:
 		var surface: Dictionary = surface_value as Dictionary
-		var key: String = _surface_axis_key(surface)
-		if not surfaces_by_view.has(key):
-			surfaces_by_view[key] = []
-		var group: Array = surfaces_by_view[key] as Array
-		group.append(surface)
-
-	var faces: Array = _cube_polyhedron_faces()
-	for key in surfaces_by_view.keys():
-		var group: Array = surfaces_by_view[key] as Array
-		if group.is_empty():
-			continue
-
-		var first_surface: Dictionary = group[0] as Dictionary
-		var axis_x: Vector3 = first_surface["axis_x"] as Vector3
-		var axis_y: Vector3 = first_surface["axis_y"] as Vector3
-		var polygons: Array = _remaining_polygons_for_surfaces(group)
-		var polygon: PackedVector2Array = _largest_polygon(polygons)
-		if polygon.size() < 3:
-			continue
-
-		for edge_index in range(polygon.size()):
-			var a: Vector2 = polygon[edge_index]
-			var normal_2d: Vector2 = _outward_edge_normal_2d(polygon, edge_index)
-			var plane_normal: Vector3 = (axis_x * normal_2d.x + axis_y * normal_2d.y).normalized()
-			var plane_point: Vector3 = axis_x * a.x + axis_y * a.y
-			faces = _clip_polyhedron_faces(faces, plane_normal, plane_point)
-			if faces.is_empty():
-				break
-		if faces.is_empty():
+		pieces = _subtract_cut_surface_from_pieces(pieces, surface)
+		if pieces.is_empty():
 			break
+	return _mesh_from_polyhedron_pieces(pieces)
 
-	return _mesh_from_polyhedron_faces(faces)
 
+func _subtract_cut_surface_from_pieces(source_pieces: Array, surface: Dictionary) -> Array:
+	var polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
+	if polygon.size() < 3:
+		return source_pieces
+
+	var axis_x: Vector3 = surface["axis_x"] as Vector3
+	var axis_y: Vector3 = surface["axis_y"] as Vector3
+	var triangles: Array = _triangles_for_cut_polygon(polygon)
+	var pieces: Array = source_pieces
+	for triangle_value in triangles:
+		var triangle: PackedVector2Array = triangle_value as PackedVector2Array
+		var next_pieces: Array = []
+		for piece_value in pieces:
+			var piece: Array = piece_value as Array
+			next_pieces.append_array(_subtract_cut_triangle_prism_from_piece(piece, triangle, axis_x, axis_y))
+		pieces = next_pieces
+		if pieces.is_empty():
+			break
+	return pieces
+
+
+func _subtract_cut_triangle_prism_from_piece(piece_faces: Array, triangle: PackedVector2Array, axis_x: Vector3, axis_y: Vector3) -> Array:
+	var remaining_pieces: Array = []
+	var inside_piece: Array = piece_faces
+
+	for edge_index in range(triangle.size()):
+		var edge_start: Vector2 = triangle[edge_index]
+		var normal_2d: Vector2 = _outward_edge_normal_2d(triangle, edge_index)
+		var plane_normal: Vector3 = (axis_x * normal_2d.x + axis_y * normal_2d.y).normalized()
+		if plane_normal.length_squared() <= 0.000001:
+			continue
+		var plane_point: Vector3 = axis_x * edge_start.x + axis_y * edge_start.y
+
+		var outside_piece: Array = _clip_polyhedron_faces(inside_piece, -plane_normal, plane_point)
+		if _polyhedron_piece_has_faces(outside_piece):
+			remaining_pieces.append(outside_piece)
+
+		inside_piece = _clip_polyhedron_faces(inside_piece, plane_normal, plane_point)
+		if not _polyhedron_piece_has_faces(inside_piece):
+			return remaining_pieces
+
+	return remaining_pieces
+
+
+func _triangles_for_cut_polygon(polygon: PackedVector2Array) -> Array:
+	var triangles: Array = []
+	var triangle_indices: PackedInt32Array = Geometry2D.triangulate_polygon(polygon)
+	for triangle_index in range(0, triangle_indices.size(), 3):
+		var triangle := PackedVector2Array([
+			polygon[triangle_indices[triangle_index]],
+			polygon[triangle_indices[triangle_index + 1]],
+			polygon[triangle_indices[triangle_index + 2]],
+		])
+		if absf(_polygon_area(triangle)) > 0.0001:
+			triangles.append(triangle)
+
+	if triangles.is_empty() and polygon.size() >= 3:
+		for point_index in range(1, polygon.size() - 1):
+			var fallback_triangle := PackedVector2Array([polygon[0], polygon[point_index], polygon[point_index + 1]])
+			if absf(_polygon_area(fallback_triangle)) > 0.0001:
+				triangles.append(fallback_triangle)
+	return triangles
+
+
+func _polyhedron_piece_has_faces(faces: Array) -> bool:
+	var valid_faces := 0
+	for face_value in faces:
+		var face: Array = face_value as Array
+		if face.size() < 3:
+			continue
+		var normal: Vector3 = ((face[1] as Vector3) - (face[0] as Vector3)).cross((face[2] as Vector3) - (face[0] as Vector3))
+		if normal.length_squared() > 0.000001:
+			valid_faces += 1
+	return valid_faces >= 4
+
+
+func _mesh_from_polyhedron_pieces(pieces: Array) -> ArrayMesh:
+	var meshes: Array = []
+	for piece_value in pieces:
+		var piece: Array = piece_value as Array
+		if not _polyhedron_piece_has_faces(piece):
+			continue
+		var piece_mesh: ArrayMesh = _mesh_from_polyhedron_faces(piece)
+		if piece_mesh.get_surface_count() > 0:
+			meshes.append(piece_mesh)
+	return _combine_meshes(meshes)
 
 func _surface_view_group(surface: Dictionary) -> String:
 	var stored_group: String = str(surface.get("view_group", ""))

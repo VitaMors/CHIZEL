@@ -241,7 +241,7 @@ func _setup_ui() -> void:
 	left_box.add_child(spacer)
 
 	var view_badge := PanelContainer.new()
-	view_badge.custom_minimum_size = Vector2(150, 58)
+	view_badge.custom_minimum_size = Vector2(150, 72)
 	var view_badge_style := StyleBoxFlat.new()
 	view_badge_style.bg_color = Color(0.04, 0.05, 0.055, 0.95)
 	view_badge_style.border_color = Color(0.78, 0.82, 0.86, 1.0)
@@ -266,7 +266,7 @@ func _setup_ui() -> void:
 	view_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	view_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	view_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	view_label.add_theme_font_size_override("font_size", 18)
+	view_label.add_theme_font_size_override("font_size", 16)
 	view_label.add_theme_color_override("font_color", Color(0.98, 0.98, 0.94, 1.0))
 	view_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.92))
 	view_label.add_theme_constant_override("outline_size", 4)
@@ -293,7 +293,7 @@ func _setup_ui() -> void:
 
 func _setup_face_picker(parent: Control) -> void:
 	var picker_box := VBoxContainer.new()
-	picker_box.custom_minimum_size = Vector2(150, 188)
+	picker_box.custom_minimum_size = Vector2(150, 212)
 	picker_box.add_theme_constant_override("separation", 4)
 	parent.add_child(picker_box)
 
@@ -309,7 +309,7 @@ func _setup_face_picker(parent: Control) -> void:
 	_add_face_arrow_button(middle_row, "<", Callable(self, "_nudge_face_view").bind(Vector2(-1, 0)))
 	face_selector = CubeFaceSelectorScript.new()
 	face_selector.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	face_selector.custom_minimum_size = Vector2(96, 112)
+	face_selector.custom_minimum_size = Vector2(112, 124)
 	face_selector.face_pressed.connect(Callable(self, "_set_current_face_view"))
 	middle_row.add_child(face_selector)
 	_add_face_arrow_button(middle_row, ">", Callable(self, "_nudge_face_view").bind(Vector2(1, 0)))
@@ -843,17 +843,37 @@ func _set_orthographic_direction(view_name: String, view_direction: Vector3, up_
 
 func _face_name_for_direction(direction: Vector3) -> String:
 	var normalized_direction := _normalized_view_direction(direction)
-	var names: Array[String] = []
-	if absf(normalized_direction.z) > 0.32:
-		names.append("Front" if normalized_direction.z > 0.0 else "Back")
-	if absf(normalized_direction.x) > 0.32:
-		names.append("Right" if normalized_direction.x > 0.0 else "Left")
-	if absf(normalized_direction.y) > 0.32:
-		names.append("Top" if normalized_direction.y > 0.0 else "Bottom")
-	if names.is_empty():
-		return "Front"
-	return " ".join(names)
+	var components: Array = [
+		{"name": "Front" if normalized_direction.z > 0.0 else "Back", "amount": absf(normalized_direction.z), "priority": 0},
+		{"name": "Right" if normalized_direction.x > 0.0 else "Left", "amount": absf(normalized_direction.x), "priority": 1},
+		{"name": "Top" if normalized_direction.y > 0.0 else "Bottom", "amount": absf(normalized_direction.y), "priority": 2},
+	]
+	components.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var amount_delta: float = float(a["amount"]) - float(b["amount"])
+		if absf(amount_delta) > 0.0001:
+			return amount_delta > 0.0
+		return int(a["priority"]) < int(b["priority"])
+	)
 
+	var strongest: Dictionary = components[0] as Dictionary
+	var second: Dictionary = components[1] as Dictionary
+	var strongest_amount: float = float(strongest["amount"])
+	var second_amount: float = float(second["amount"])
+	if strongest_amount >= 0.985 and second_amount <= 0.12:
+		return str(strongest["name"])
+
+	var cutoff: float = maxf(0.18, strongest_amount * 0.35)
+	var names: Array[String] = []
+	for component_value in components:
+		var component: Dictionary = component_value as Dictionary
+		if float(component["amount"]) >= cutoff:
+			names.append(str(component["name"]))
+
+	if names.size() == 1 and second_amount > 0.08:
+		names.append(str(second["name"]))
+	if names.is_empty():
+		names.append("Front")
+	return "%s Angle" % " ".join(names)
 
 func _normalized_view_direction(direction: Vector3) -> Vector3:
 	if direction.length_squared() < 0.0001:
