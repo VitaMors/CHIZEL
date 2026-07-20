@@ -464,28 +464,7 @@ func _build_cut_mesh() -> ArrayMesh:
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	var fallback_surfaces: Array = _latest_projection_surfaces()
-	if _surfaces_include_non_axis_aligned(cut_surfaces):
-		return build_grid_shell_mesh(true)
-	if has_display_axes:
-		var visible_surfaces: Array = _visible_cut_surfaces()
-		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size() and _surfaces_can_use_exact_projection(visible_surfaces):
-			return build_exact_cut_mesh(visible_surfaces)
-
-		var display_combined_mesh: ArrayMesh = build_combined_cut_mesh()
-		if display_combined_mesh.get_surface_count() > 0:
-			return display_combined_mesh
-
-		if not visible_surfaces.is_empty() and _surfaces_can_use_exact_projection(visible_surfaces):
-			return build_exact_cut_mesh(visible_surfaces)
-	else:
-		var combined_mesh: ArrayMesh = build_combined_cut_mesh()
-		if combined_mesh.get_surface_count() > 0:
-			return combined_mesh
-
-	if not fallback_surfaces.is_empty() and _surfaces_can_use_exact_projection(fallback_surfaces):
-		return build_exact_cut_mesh(fallback_surfaces)
-	return ArrayMesh.new()
+	return build_grid_shell_mesh(true)
 
 
 func build_base_poly_mesh() -> ArrayMesh:

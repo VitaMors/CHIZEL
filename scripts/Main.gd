@@ -240,10 +240,37 @@ func _setup_ui() -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left_box.add_child(spacer)
 
+	var view_badge := PanelContainer.new()
+	view_badge.custom_minimum_size = Vector2(150, 58)
+	var view_badge_style := StyleBoxFlat.new()
+	view_badge_style.bg_color = Color(0.04, 0.05, 0.055, 0.95)
+	view_badge_style.border_color = Color(0.78, 0.82, 0.86, 1.0)
+	view_badge_style.set_border_width_all(1)
+	view_badge_style.set_corner_radius_all(6)
+	view_badge.add_theme_stylebox_override("panel", view_badge_style)
+	left_box.add_child(view_badge)
+
+	var view_badge_box := VBoxContainer.new()
+	view_badge_box.add_theme_constant_override("separation", 0)
+	view_badge.add_child(view_badge_box)
+
+	var view_caption := Label.new()
+	view_caption.text = "VIEW"
+	view_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	view_caption.add_theme_font_size_override("font_size", 10)
+	view_caption.add_theme_color_override("font_color", Color(0.72, 0.78, 0.82, 1.0))
+	view_badge_box.add_child(view_caption)
+
 	view_label = Label.new()
-	view_label.text = "Perspective"
+	view_label.text = "PERSPECTIVE"
 	view_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	left_box.add_child(view_label)
+	view_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	view_label.add_theme_font_size_override("font_size", 18)
+	view_label.add_theme_color_override("font_color", Color(0.98, 0.98, 0.94, 1.0))
+	view_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.92))
+	view_label.add_theme_constant_override("outline_size", 4)
+	view_badge_box.add_child(view_label)
 
 	status_label = Label.new()
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -858,7 +885,7 @@ func _update_view_light() -> void:
 
 func _update_view_label() -> void:
 	if view_label:
-		view_label.text = current_view
+		view_label.text = current_view.to_upper()
 	_update_face_selector()
 
 

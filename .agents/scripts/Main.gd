@@ -52,6 +52,8 @@ var mirror_toggle: CheckButton
 var export_dialog: FileDialog
 var reference_dialog: FileDialog
 var reference_toggle: CheckButton
+var reference_drop_zone: PanelContainer
+var reference_drop_label: Label
 var reference_opacity_slider: HSlider
 var reference_scale_slider: HSlider
 var extrude_panel: PanelContainer
@@ -64,15 +66,17 @@ var pending_extrude_axis_y: Vector3 = Vector3.UP
 var pending_extrude_view_name: String = ""
 var pending_extrude_original_state: Dictionary = {}
 var pending_extrude_value := 0.0
+var reference_states: Dictionary = {}
 
 
 func _ready() -> void:
 	volume = ModelVolumeScript.new(Vector3i(32, 32, 32), 0.125)
 	_setup_world()
 	_setup_ui()
+	_setup_file_drop()
 	_rebuild_model_mesh()
 	_set_perspective_view()
-	_set_status("Ready. Pick a die face, then use Chisel to add, subtract, or extrude material.")
+	_set_status("Ready. Pick a face angle, then use Chisel to add, subtract, or extrude material.")
 
 
 func _setup_world() -> void:
@@ -187,7 +191,7 @@ func _setup_ui() -> void:
 	_add_button(left_box, "Perspective", Callable(self, "_set_perspective_view"))
 	_setup_face_picker(left_box)
 	_add_section_label(left_box, "Reference")
-	_add_button(left_box, "Import Ref", Callable(self, "_show_reference_dialog"))
+	_setup_reference_drop_zone(left_box)
 	reference_toggle = CheckButton.new()
 	reference_toggle.text = "Show Ref"
 	reference_toggle.button_pressed = true
@@ -236,10 +240,37 @@ func _setup_ui() -> void:
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left_box.add_child(spacer)
 
+	var view_badge := PanelContainer.new()
+	view_badge.custom_minimum_size = Vector2(150, 58)
+	var view_badge_style := StyleBoxFlat.new()
+	view_badge_style.bg_color = Color(0.04, 0.05, 0.055, 0.95)
+	view_badge_style.border_color = Color(0.78, 0.82, 0.86, 1.0)
+	view_badge_style.set_border_width_all(1)
+	view_badge_style.set_corner_radius_all(6)
+	view_badge.add_theme_stylebox_override("panel", view_badge_style)
+	left_box.add_child(view_badge)
+
+	var view_badge_box := VBoxContainer.new()
+	view_badge_box.add_theme_constant_override("separation", 0)
+	view_badge.add_child(view_badge_box)
+
+	var view_caption := Label.new()
+	view_caption.text = "VIEW"
+	view_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	view_caption.add_theme_font_size_override("font_size", 10)
+	view_caption.add_theme_color_override("font_color", Color(0.72, 0.78, 0.82, 1.0))
+	view_badge_box.add_child(view_caption)
+
 	view_label = Label.new()
-	view_label.text = "Perspective"
+	view_label.text = "PERSPECTIVE"
 	view_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	left_box.add_child(view_label)
+	view_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	view_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	view_label.add_theme_font_size_override("font_size", 18)
+	view_label.add_theme_color_override("font_color", Color(0.98, 0.98, 0.94, 1.0))
+	view_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.92))
+	view_label.add_theme_constant_override("outline_size", 4)
+	view_badge_box.add_child(view_label)
 
 	status_label = Label.new()
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -258,24 +289,6 @@ func _setup_ui() -> void:
 
 	_setup_extrude_panel(root)
 
-	export_dialog = FileDialog.new()
-	export_dialog.title = "Export GLB"
-	export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-	export_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	export_dialog.filters = PackedStringArray(["*.glb ; GLB model"])
-	export_dialog.current_file = "chizel_model.glb"
-	export_dialog.size = Vector2i(720, 480)
-	export_dialog.file_selected.connect(Callable(self, "_export_glb"))
-	canvas.add_child(export_dialog)
-
-	reference_dialog = FileDialog.new()
-	reference_dialog.title = "Import Reference Image"
-	reference_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-	reference_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	reference_dialog.filters = PackedStringArray(["*.png, *.jpg, *.jpeg, *.webp, *.bmp ; Image files"])
-	reference_dialog.size = Vector2i(720, 480)
-	reference_dialog.file_selected.connect(Callable(self, "_import_reference_image"))
-	canvas.add_child(reference_dialog)
 
 
 func _setup_face_picker(parent: Control) -> void:
@@ -304,6 +317,27 @@ func _setup_face_picker(parent: Control) -> void:
 	_add_face_arrow_button(down_row, "v", Callable(self, "_nudge_face_view").bind(Vector2(0, -1)))
 	_update_face_selector()
 
+
+func _setup_reference_drop_zone(parent: Control) -> void:
+	reference_drop_zone = PanelContainer.new()
+	reference_drop_zone.custom_minimum_size = Vector2(150, 70)
+	reference_drop_zone.mouse_filter = Control.MOUSE_FILTER_PASS
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.09, 0.10, 0.11, 0.82)
+	panel_style.border_color = Color(0.46, 0.50, 0.54, 1.0)
+	panel_style.set_border_width_all(1)
+	panel_style.set_corner_radius_all(6)
+	reference_drop_zone.add_theme_stylebox_override("panel", panel_style)
+	parent.add_child(reference_drop_zone)
+
+	reference_drop_label = Label.new()
+	reference_drop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	reference_drop_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	reference_drop_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	reference_drop_label.add_theme_font_size_override("font_size", 12)
+	reference_drop_label.custom_minimum_size = Vector2(140, 60)
+	reference_drop_zone.add_child(reference_drop_label)
+	_update_reference_drop_zone()
 
 func _setup_extrude_panel(parent: Control) -> void:
 	extrude_panel = PanelContainer.new()
@@ -510,7 +544,7 @@ func _set_tool_chisel() -> void:
 	if camera_mode != CameraMode.ORTHOGRAPHIC:
 		_set_cube_face_view(face_view_direction, face_view_up)
 	lasso_overlay.set_active(true)
-	_set_status("Chisel %s mode. Click polygon points on the selected die face." % _lasso_mode_name())
+	_set_status("Chisel %s mode. Click polygon points on the selected face angle." % _lasso_mode_name())
 
 
 func _set_lasso_subtract() -> void:
@@ -549,15 +583,40 @@ func _set_mirror_x(enabled: bool) -> void:
 
 
 func _show_export_dialog() -> void:
-	export_dialog.current_file = "chizel_model.glb"
-	export_dialog.popup_centered()
+	_export_glb_to_downloads()
 
 
 func _show_reference_dialog() -> void:
-	reference_dialog.popup_centered()
+	_set_status("Pick a face angle, then drop a PNG/JPG/WebP/BMP into the reference box.")
+
+
+func _setup_file_drop() -> void:
+	var window := get_window()
+	if window != null and window.has_signal("files_dropped"):
+		window.connect("files_dropped", Callable(self, "_handle_files_dropped"))
+
+
+func _handle_files_dropped(files: PackedStringArray) -> void:
+	if files.is_empty():
+		return
+	for file_path in files:
+		if _is_supported_reference_file(file_path):
+			_import_reference_image(file_path)
+			return
+	_set_status("Drop a PNG, JPG, WebP, or BMP reference image.")
+
+
+func _is_supported_reference_file(path: String) -> bool:
+	var lower_path := path.to_lower()
+	return lower_path.ends_with(".png") or lower_path.ends_with(".jpg") or lower_path.ends_with(".jpeg") or lower_path.ends_with(".webp") or lower_path.ends_with(".bmp")
 
 
 func _import_reference_image(path: String) -> void:
+	var key := _current_reference_key()
+	if key == "":
+		_set_status("Pick a face angle before dropping a reference image.")
+		return
+
 	var image := Image.new()
 	var load_error := image.load(path)
 	if load_error != OK:
@@ -566,10 +625,56 @@ func _import_reference_image(path: String) -> void:
 
 	var texture := ImageTexture.create_from_image(image)
 	reference_overlay.set_reference_texture(texture)
-	reference_toggle.button_pressed = true
-	reference_scale_slider.value = reference_overlay.image_scale
+	reference_states[key] = {
+		"texture": texture,
+		"scale": reference_overlay.image_scale,
+		"offset": reference_overlay.image_offset,
+	}
+	if reference_toggle != null:
+		reference_toggle.button_pressed = true
+	if reference_scale_slider != null:
+		reference_scale_slider.set_value_no_signal(reference_overlay.image_scale)
 	_update_reference_visibility()
-	_set_status("Reference image imported. Use opacity, scale, and nudges to line it up.")
+	_set_status("Reference image set for %s." % key)
+
+
+func _current_reference_key() -> String:
+	if camera_mode != CameraMode.ORTHOGRAPHIC:
+		return ""
+	return current_view
+
+
+func _apply_reference_state_for_current_view() -> void:
+	if reference_overlay == null:
+		return
+	var key := _current_reference_key()
+	if key == "" or not reference_states.has(key):
+		reference_overlay.set_reference_state(null, 1.0, Vector2.ZERO)
+		if reference_scale_slider != null:
+			reference_scale_slider.set_value_no_signal(1.0)
+		return
+
+	var state: Dictionary = reference_states[key] as Dictionary
+	var texture: Texture2D = state.get("texture", null) as Texture2D
+	var scale_value: float = float(state.get("scale", 1.0))
+	var offset_value: Vector2 = state.get("offset", Vector2.ZERO) as Vector2
+	reference_overlay.set_reference_state(texture, scale_value, offset_value)
+	if reference_scale_slider != null:
+		reference_scale_slider.set_value_no_signal(reference_overlay.image_scale)
+
+
+func _save_current_reference_state() -> void:
+	if reference_overlay == null or reference_overlay.reference_texture == null:
+		return
+	var key := _current_reference_key()
+	if key == "":
+		return
+	reference_states[key] = {
+		"texture": reference_overlay.reference_texture,
+		"scale": reference_overlay.image_scale,
+		"offset": reference_overlay.image_offset,
+	}
+	_update_reference_drop_zone()
 
 
 func _set_reference_visible(_enabled: bool) -> void:
@@ -581,30 +686,60 @@ func _set_reference_opacity(value: float) -> void:
 
 
 func _set_reference_scale(value: float) -> void:
+	if reference_overlay.reference_texture == null:
+		return
 	reference_overlay.set_image_scale(value)
+	_save_current_reference_state()
 
 
 func _nudge_reference(delta: Vector2) -> void:
+	if reference_overlay.reference_texture == null:
+		_set_status("No reference image on %s." % current_view)
+		return
 	reference_overlay.nudge(delta)
+	_save_current_reference_state()
 
 
 func _center_reference() -> void:
+	if reference_overlay.reference_texture == null:
+		return
 	reference_overlay.center_image()
+	_save_current_reference_state()
 
 
 func _clear_reference() -> void:
+	var key := _current_reference_key()
+	if key != "" and reference_states.has(key):
+		reference_states.erase(key)
 	reference_overlay.clear_reference()
 	_update_reference_visibility()
-	_set_status("Reference image cleared.")
+	_set_status("Reference image cleared for %s." % key if key != "" else "Reference image cleared.")
+
+
+func _update_reference_drop_zone() -> void:
+	if reference_drop_label == null:
+		return
+	var key := _current_reference_key()
+	if key == "":
+		reference_drop_label.text = "Ref Image\nPick Face"
+		reference_drop_label.modulate = Color(0.62, 0.66, 0.70, 1.0)
+		return
+	if reference_states.has(key):
+		reference_drop_label.text = "Ref Set\n%s" % key
+		reference_drop_label.modulate = Color(0.86, 0.88, 0.82, 1.0)
+	else:
+		reference_drop_label.text = "Drop Ref\n%s" % key
+		reference_drop_label.modulate = Color(0.72, 0.76, 0.80, 1.0)
 
 
 func _update_reference_visibility() -> void:
 	if reference_overlay == null:
 		return
 	reference_overlay.viewport_margin_left = maxf(left_panel.size.x, 180.0)
-	var should_show := camera_mode == CameraMode.ORTHOGRAPHIC and reference_toggle != null and reference_toggle.button_pressed
+	_apply_reference_state_for_current_view()
+	var should_show := camera_mode == CameraMode.ORTHOGRAPHIC and reference_toggle != null and reference_toggle.button_pressed and reference_overlay.reference_texture != null
 	reference_overlay.set_active(should_show)
-
+	_update_reference_drop_zone()
 
 func _set_perspective_view() -> void:
 	_cancel_pending_extrude(false)
@@ -750,7 +885,7 @@ func _update_view_light() -> void:
 
 func _update_view_label() -> void:
 	if view_label:
-		view_label.text = current_view
+		view_label.text = current_view.to_upper()
 	_update_face_selector()
 
 
@@ -1005,10 +1140,46 @@ func _lasso_mode_name() -> String:
 			return "Subtract"
 
 
+func _export_glb_to_downloads() -> void:
+	var file_name := "chizel_model.glb"
+	var glb_bytes := _build_glb_buffer()
+	if glb_bytes.is_empty():
+		return
+
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(glb_bytes, file_name, "model/gltf-binary")
+		_set_status("Downloading GLB: %s" % file_name)
+		return
+
+	var downloads_dir := OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	if downloads_dir == "":
+		downloads_dir = OS.get_user_data_dir()
+	var target_path := downloads_dir.path_join(file_name)
+	var file := FileAccess.open(target_path, FileAccess.WRITE)
+	if file == null:
+		_set_status("GLB export failed. Could not write to Downloads.")
+		return
+	file.store_buffer(glb_bytes)
+	file.close()
+	_set_status("Exported GLB to Downloads: %s" % target_path)
+
+
 func _export_glb(path: String) -> void:
 	if not path.to_lower().ends_with(".glb"):
 		path += ".glb"
+	var glb_bytes := _build_glb_buffer()
+	if glb_bytes.is_empty():
+		return
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		_set_status("GLB export failed. Check the save location and try again.")
+		return
+	file.store_buffer(glb_bytes)
+	file.close()
+	_set_status("Exported GLB: %s" % path)
 
+
+func _build_glb_buffer() -> PackedByteArray:
 	var export_root := Node3D.new()
 	export_root.name = "CHIZEL_Model"
 
@@ -1024,15 +1195,13 @@ func _export_glb(path: String) -> void:
 	if append_error != OK:
 		_set_status("GLB export failed while preparing the model.")
 		export_root.free()
-		return
+		return PackedByteArray()
 
-	var write_error := document.write_to_filesystem(state, path)
+	var glb_bytes: PackedByteArray = document.generate_buffer(state)
 	export_root.free()
-	if write_error == OK:
-		_set_status("Exported GLB: %s" % path)
-	else:
-		_set_status("GLB export failed. Check the save location and try again.")
-
+	if glb_bytes.is_empty():
+		_set_status("GLB export failed while generating the download.")
+	return glb_bytes
 
 func _is_pointer_over_toolbar(event: InputEvent) -> bool:
 	if event is InputEventMouseButton or event is InputEventMouseMotion:

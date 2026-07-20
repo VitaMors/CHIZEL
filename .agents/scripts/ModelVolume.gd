@@ -186,9 +186,9 @@ func _solid_projection_polygons_for_axes(axis_x: Vector3, axis_y: Vector3, depth
 	var polygons: Array = [_projected_cube_rect(axis_x, axis_y)]
 	for surface_value in cut_surfaces:
 		var surface: Dictionary = surface_value as Dictionary
-		if not _surface_matches_axes(surface, axis_x, axis_y, depth_axis):
+		var cutter := _surface_polygon_for_axes(surface, axis_x, axis_y, depth_axis)
+		if cutter.size() < 3:
 			continue
-		var cutter: PackedVector2Array = surface["polygon"] as PackedVector2Array
 		var next_polygons: Array = []
 		for polygon_value in polygons:
 			var source_polygon: PackedVector2Array = polygon_value as PackedVector2Array
@@ -199,6 +199,23 @@ func _solid_projection_polygons_for_axes(axis_x: Vector3, axis_y: Vector3, depth
 					next_polygons.append(clipped_points)
 		polygons = next_polygons
 	return polygons
+
+
+func _surface_polygon_for_axes(surface: Dictionary, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> PackedVector2Array:
+	if not _surface_matches_axes(surface, axis_x, axis_y, depth_axis):
+		return PackedVector2Array()
+
+	var stored_polygon: PackedVector2Array = surface["polygon"] as PackedVector2Array
+	if _surface_matches_axes_signed(surface, axis_x, axis_y, depth_axis):
+		return stored_polygon.duplicate()
+
+	var stored_axis_x: Vector3 = surface["axis_x"] as Vector3
+	var stored_axis_y: Vector3 = surface["axis_y"] as Vector3
+	var transformed := PackedVector2Array()
+	for point in stored_polygon:
+		var world_point: Vector3 = stored_axis_x * point.x + stored_axis_y * point.y
+		transformed.append(Vector2(world_point.dot(axis_x), world_point.dot(axis_y)))
+	return transformed
 
 
 func cut_count() -> int:
@@ -226,20 +243,54 @@ func clear_display_axes() -> void:
 
 
 func apply_lasso_operation(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, add_material: bool = false, invert_cut: bool = false, mirror_x: bool = false, view_name: String = "") -> int:
-	var changed := 0
+	if polygon_points.size() < 3:
+		return 0
+
+	axis_x = axis_x.normalized()
+	axis_y = axis_y.normalized()
 	var depth_axis := axis_x.cross(axis_y).normalized()
 	var cut_view_name: String = view_name if view_name != "" else display_view_name
+	var changed := _apply_lasso_projection(polygon_points, axis_x, axis_y, add_material, invert_cut)
+	var mirrored_changed := 0
+	var mirrored_polygon := PackedVector2Array()
+	var mirrored_axis_x := Vector3.ZERO
+	var mirrored_axis_y := Vector3.ZERO
+	var mirrored_depth_axis := Vector3.ZERO
+
+	if mirror_x:
+		for point in polygon_points:
+			mirrored_polygon.append(Vector2(-point.x, point.y))
+		mirrored_axis_x = -_mirror_x_axis(axis_x)
+		mirrored_axis_y = _mirror_x_axis(axis_y)
+		mirrored_depth_axis = _mirror_x_axis(depth_axis)
+		mirrored_changed = _apply_lasso_projection(mirrored_polygon, mirrored_axis_x, mirrored_axis_y, add_material, invert_cut)
+		changed += mirrored_changed
+
+	if add_material:
+		if changed > 0:
+			cut_surfaces.clear()
+	elif not invert_cut:
+		if changed <= 0:
+			return 0
+		if changed - mirrored_changed > 0:
+			_store_cut_surface(polygon_points, axis_x, axis_y, depth_axis, cut_view_name)
+		if mirror_x and mirrored_changed > 0:
+			_store_cut_surface(mirrored_polygon, mirrored_axis_x, mirrored_axis_y, mirrored_depth_axis, cut_view_name)
+	elif changed > 0:
+		changed += clean_solid_body(false)
+
+	return changed
+
+
+func _apply_lasso_projection(polygon_points: PackedVector2Array, axis_x: Vector3, axis_y: Vector3, add_material: bool, invert_cut: bool) -> int:
+	var changed := 0
 	for z in range(grid_size.z):
 		for y in range(grid_size.y):
 			for x in range(grid_size.x):
 				var voxel_index := index(x, y, z)
-
 				var center := voxel_center(x, y, z)
 				var point := Vector2(center.dot(axis_x), center.dot(axis_y))
 				var inside := Geometry2D.is_point_in_polygon(point, polygon_points)
-				if mirror_x and not inside:
-					var mirrored_point := Vector2(-point.x, point.y)
-					inside = Geometry2D.is_point_in_polygon(mirrored_point, polygon_points)
 				if inside != invert_cut:
 					if add_material:
 						if voxels[voxel_index] == EMPTY:
@@ -248,24 +299,7 @@ func apply_lasso_operation(polygon_points: PackedVector2Array, axis_x: Vector3, 
 					elif voxels[voxel_index] != EMPTY:
 						voxels[voxel_index] = EMPTY
 						changed += 1
-
-	if add_material:
-		if changed > 0:
-			cut_surfaces.clear()
-	elif not invert_cut:
-		_store_cut_surface(polygon_points, axis_x, axis_y, depth_axis, cut_view_name)
-		if mirror_x:
-			var mirrored_polygon := PackedVector2Array()
-			for point in polygon_points:
-				mirrored_polygon.append(Vector2(-point.x, point.y))
-			_store_cut_surface(mirrored_polygon, axis_x, axis_y, depth_axis, cut_view_name)
-		if changed < 1:
-			changed = 1
-	elif changed > 0:
-		changed += clean_solid_body(false)
-
 	return changed
-
 
 func clean_solid_body(clear_cut_surfaces_on_change: bool = true) -> int:
 	var removed := _keep_largest_connected_component()
@@ -430,28 +464,7 @@ func _build_cut_mesh() -> ArrayMesh:
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	var fallback_surfaces: Array = _latest_projection_surfaces()
-	if _surfaces_include_non_axis_aligned(cut_surfaces):
-		return build_grid_shell_mesh(true)
-	if has_display_axes:
-		var visible_surfaces: Array = _visible_cut_surfaces()
-		if not visible_surfaces.is_empty() and visible_surfaces.size() == cut_surfaces.size() and _surfaces_can_use_exact_projection(visible_surfaces):
-			return build_exact_cut_mesh(visible_surfaces)
-
-		var display_combined_mesh: ArrayMesh = build_combined_cut_mesh()
-		if display_combined_mesh.get_surface_count() > 0:
-			return display_combined_mesh
-
-		if not visible_surfaces.is_empty() and _surfaces_can_use_exact_projection(visible_surfaces):
-			return build_exact_cut_mesh(visible_surfaces)
-	else:
-		var combined_mesh: ArrayMesh = build_combined_cut_mesh()
-		if combined_mesh.get_surface_count() > 0:
-			return combined_mesh
-
-	if not fallback_surfaces.is_empty() and _surfaces_can_use_exact_projection(fallback_surfaces):
-		return build_exact_cut_mesh(fallback_surfaces)
-	return ArrayMesh.new()
+	return build_grid_shell_mesh(true)
 
 
 func build_base_poly_mesh() -> ArrayMesh:
@@ -459,10 +472,18 @@ func build_base_poly_mesh() -> ArrayMesh:
 
 
 func _surfaces_can_use_exact_projection(active_surfaces: Array) -> bool:
-	if active_surfaces.is_empty():
+	if active_surfaces.is_empty() or _surfaces_include_non_axis_aligned(active_surfaces):
 		return false
-	return not _surfaces_include_non_axis_aligned(active_surfaces)
 
+	var first_surface: Dictionary = active_surfaces[0] as Dictionary
+	var first_axis_x: Vector3 = first_surface["axis_x"] as Vector3
+	var first_axis_y: Vector3 = first_surface["axis_y"] as Vector3
+	var first_depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
+	for surface_value in active_surfaces:
+		var surface: Dictionary = surface_value as Dictionary
+		if not _surface_matches_axes_signed(surface, first_axis_x, first_axis_y, first_depth_axis):
+			return false
+	return true
 
 func _surface_projection_is_axis_aligned(surface: Dictionary) -> bool:
 	var depth_axis: Vector3 = surface["depth_axis"] as Vector3
@@ -501,27 +522,7 @@ func _surface_operations_share_projection() -> bool:
 	return true
 
 func _cut_surfaces_share_projection() -> bool:
-	if cut_surfaces.is_empty():
-		return false
-
-	var first_surface: Dictionary = cut_surfaces[0] as Dictionary
-	var first_group: String = _surface_view_group(first_surface)
-	if first_group != "":
-		for surface_value in cut_surfaces:
-			var surface: Dictionary = surface_value as Dictionary
-			if _surface_view_group(surface) != first_group:
-				return false
-		return true
-
-	var first_axis_x: Vector3 = first_surface["axis_x"] as Vector3
-	var first_axis_y: Vector3 = first_surface["axis_y"] as Vector3
-	var first_depth_axis: Vector3 = first_surface["depth_axis"] as Vector3
-	for surface_value in cut_surfaces:
-		var surface: Dictionary = surface_value as Dictionary
-		if not _surface_matches_axes(surface, first_axis_x, first_axis_y, first_depth_axis):
-			return false
-	return true
-
+	return _surfaces_can_use_exact_projection(cut_surfaces)
 
 func _visible_cut_surfaces() -> Array:
 	if cut_surfaces.is_empty():
@@ -552,24 +553,15 @@ func _latest_projection_surfaces() -> Array:
 		return []
 
 	var reference_surface: Dictionary = cut_surfaces[cut_surfaces.size() - 1] as Dictionary
-	var reference_group: String = _surface_view_group(reference_surface)
-	var matching_surfaces: Array = []
-	if reference_group != "":
-		for surface_value in cut_surfaces:
-			var surface: Dictionary = surface_value as Dictionary
-			if _surface_view_group(surface) == reference_group:
-				matching_surfaces.append(surface)
-		return matching_surfaces
-
 	var reference_axis_x: Vector3 = reference_surface["axis_x"] as Vector3
 	var reference_axis_y: Vector3 = reference_surface["axis_y"] as Vector3
 	var reference_depth_axis: Vector3 = reference_surface["depth_axis"] as Vector3
+	var matching_surfaces: Array = []
 	for surface_value in cut_surfaces:
 		var surface: Dictionary = surface_value as Dictionary
-		if _surface_matches_axes(surface, reference_axis_x, reference_axis_y, reference_depth_axis):
+		if _surface_matches_axes_signed(surface, reference_axis_x, reference_axis_y, reference_depth_axis):
 			matching_surfaces.append(surface)
 	return matching_surfaces
-
 
 func _surface_matches_axes(surface: Dictionary, axis_x: Vector3, axis_y: Vector3, depth_axis: Vector3) -> bool:
 	var stored_axis_x: Vector3 = surface["axis_x"] as Vector3
@@ -590,9 +582,7 @@ func build_combined_cut_mesh() -> ArrayMesh:
 	var surfaces_by_view: Dictionary = {}
 	for surface_value in cut_surfaces:
 		var surface: Dictionary = surface_value as Dictionary
-		var key: String = _surface_view_group(surface)
-		if key == "":
-			key = _surface_axis_key(surface)
+		var key: String = _surface_axis_key(surface)
 		if not surfaces_by_view.has(key):
 			surfaces_by_view[key] = []
 		var group: Array = surfaces_by_view[key] as Array
