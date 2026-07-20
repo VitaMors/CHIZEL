@@ -470,8 +470,10 @@ func _build_cut_mesh() -> ArrayMesh:
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	var patch_surfaces := _patch_surfaces_for_mixed_cut_mesh()
-	return build_grid_shell_mesh(not patch_surfaces.is_empty(), patch_surfaces)
+	if _surfaces_include_non_axis_aligned(cut_surfaces):
+		return build_low_poly_mesh()
+
+	return build_grid_shell_mesh(false)
 
 
 func build_base_poly_mesh() -> ArrayMesh:
