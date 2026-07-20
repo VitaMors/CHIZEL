@@ -293,26 +293,29 @@ func _setup_ui() -> void:
 
 func _setup_face_picker(parent: Control) -> void:
 	var picker_box := VBoxContainer.new()
-	picker_box.custom_minimum_size = Vector2(150, 154)
+	picker_box.custom_minimum_size = Vector2(150, 188)
 	picker_box.add_theme_constant_override("separation", 4)
 	parent.add_child(picker_box)
 
 	var up_row := HBoxContainer.new()
+	up_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	picker_box.add_child(up_row)
 	_add_face_arrow_button(up_row, "^", Callable(self, "_nudge_face_view").bind(Vector2(0, 1)))
 
 	var middle_row := HBoxContainer.new()
-	middle_row.add_theme_constant_override("separation", 4)
+	middle_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	middle_row.add_theme_constant_override("separation", 6)
 	picker_box.add_child(middle_row)
 	_add_face_arrow_button(middle_row, "<", Callable(self, "_nudge_face_view").bind(Vector2(-1, 0)))
 	face_selector = CubeFaceSelectorScript.new()
-	face_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	face_selector.custom_minimum_size = Vector2(78, 92)
+	face_selector.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	face_selector.custom_minimum_size = Vector2(96, 112)
 	face_selector.face_pressed.connect(Callable(self, "_set_current_face_view"))
 	middle_row.add_child(face_selector)
 	_add_face_arrow_button(middle_row, ">", Callable(self, "_nudge_face_view").bind(Vector2(1, 0)))
 
 	var down_row := HBoxContainer.new()
+	down_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	picker_box.add_child(down_row)
 	_add_face_arrow_button(down_row, "v", Callable(self, "_nudge_face_view").bind(Vector2(0, -1)))
 	_update_face_selector()
@@ -424,8 +427,8 @@ func _add_small_button(parent: Control, text: String, callback: Callable) -> voi
 func _add_face_arrow_button(parent: Control, text: String, callback: Callable) -> void:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(38, 30)
-	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.custom_minimum_size = Vector2(34, 34)
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	button.pressed.connect(callback)
 	parent.add_child(button)
 

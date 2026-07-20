@@ -77,6 +77,13 @@ func is_solid(x: int, y: int, z: int) -> bool:
 	return is_in_bounds(x, y, z) and voxels[index(x, y, z)] != EMPTY
 
 
+func is_full_cube() -> bool:
+	for material_index in voxels:
+		if material_index == EMPTY:
+			return false
+	return true
+
+
 func voxel_center(x: int, y: int, z: int) -> Vector3:
 	var half := Vector3(grid_size.x, grid_size.y, grid_size.z) * voxel_size * 0.5
 	return Vector3(x + 0.5, y + 0.5, z + 0.5) * voxel_size - half
@@ -459,12 +466,12 @@ func build_mesh() -> ArrayMesh:
 
 func _build_cut_mesh() -> ArrayMesh:
 	if cut_surfaces.is_empty():
-		return build_base_poly_mesh()
+		return build_base_poly_mesh() if is_full_cube() else build_grid_shell_mesh(false)
 
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	return build_grid_shell_mesh(true)
+	return build_grid_shell_mesh(false)
 
 
 func build_base_poly_mesh() -> ArrayMesh:
