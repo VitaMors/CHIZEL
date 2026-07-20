@@ -470,10 +470,11 @@ func _build_cut_mesh() -> ArrayMesh:
 	if _cut_surfaces_share_projection():
 		return build_exact_cut_mesh(cut_surfaces)
 
-	if _surfaces_include_non_axis_aligned(cut_surfaces):
-		return build_analytic_cut_mesh()
+	var combined_mesh := build_combined_cut_mesh()
+	if combined_mesh.get_surface_count() > 0:
+		return combined_mesh
 
-	return build_grid_shell_mesh(false)
+	return build_exact_cut_mesh(_latest_projection_surfaces())
 
 
 func build_base_poly_mesh() -> ArrayMesh:
